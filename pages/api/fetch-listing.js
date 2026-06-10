@@ -276,8 +276,13 @@ function extractFeaturesFromText(text) {
     ['Panoramic', 'Panoramic Sunroof: Expansive open-air feeling'],
   ];
   const found = [];
+  const seen = new Set();
   for (const [kw, label] of keywords) {
-    if (new RegExp(kw, 'i').test(text)) found.push(label);
+    const key = label.split(':')[0];
+    if (!seen.has(key) && new RegExp(kw, 'i').test(text)) {
+      found.push(label);
+      seen.add(key);
+    }
     if (found.length >= 10) break;
   }
   return found;
