@@ -23,7 +23,7 @@ export default async function handler(req, res) {
 
 async function fetchWithRetry(url, attempts = 2) {
   const SCRAPER_KEY = 'c12fb1626ab469fb5e3e0807397c93d7';
-  const scraperUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&premium=true&ultra_premium=true&country_code=ca&keep_headers=true`;
+const scraperUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&premium=true&country_code=ca`;
   for (let i = 0; i < attempts; i++) {
     try {
       const r = await fetch(scraperUrl, { headers: { 'Accept': 'text/html' }, redirect: 'follow' });
