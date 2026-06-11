@@ -20,6 +20,12 @@ export default function Home() {
     setAllImgs([]); setSelImgs([]); setPasteUrls(''); setPreview(false);
   }
 
+  function proxyImg(src) {
+    if (!src) return src;
+    if (src.startsWith('/api/proxy-image')) return src;
+    return `/api/proxy-image?url=${encodeURIComponent(src)}`;
+  }
+
   async function fetchListing() {
     if (!url.trim()) return setStatus({ msg: 'Paste a listing URL first.', type: 'err' });
     clearAll();
@@ -86,10 +92,10 @@ export default function Home() {
         const c = await window.html2canvas(slide, {
           scale: 2,
           useCORS: true,
-          allowTaint: true,
+          allowTaint: false,
           backgroundColor: '#000000',
           logging: false,
-          imageTimeout: 15000,
+          imageTimeout: 20000,
         });
         const imgData = c.toDataURL('image/jpeg', 0.93);
         const ph = Math.round((c.height / c.width) * W);
@@ -116,24 +122,17 @@ export default function Home() {
   const LBOT = `<div style="display:flex;flex-direction:column;align-items:center;padding:16px;gap:2px">${MSML}<div style="font-size:12px;font-weight:900;color:#2563eb;letter-spacing:2px;text-align:center;line-height:1.4">EASY AUTO LOANS<br/>CANADA</div></div>`;
   const STAR = (items) => items.map(t => `<div style="display:flex;align-items:center;gap:10px;font-size:18px;font-weight:700;color:white;padding:2px 0"><span style="color:#2563eb;font-size:20px;flex-shrink:0">&#9733;</span>${t}</div>`).join('');
 
-  // Photo slide HTML — object-fit cover to fill properly
-  const photoSlideStyle = `width:100%;height:100%;object-fit:cover;object-position:center;display:block`;
-  const pairSlide = (a, b) => `<div style="width:100%;aspect-ratio:9/16;display:flex;flex-direction:column;background:#000"><img src="${a}" style="${photoSlideStyle}" crossorigin="anonymous"/><div style="height:4px;background:#000;flex-shrink:0"></div><img src="${b}" style="${photoSlideStyle}" crossorigin="anonymous"/></div>`;
-  const singleSlide = (a) => `<div style="width:100%;aspect-ratio:9/16;background:#000;overflow:hidden"><img src="${a}" style="${photoSlideStyle}" crossorigin="anonymous"/></div>`;
+  const PS = `width:100%;height:100%;object-fit:cover;object-position:center;display:block`;
+  const pairSlide = (a, b) => `<div style="width:100%;aspect-ratio:9/16;display:flex;flex-direction:column;background:#000"><img src="${proxyImg(a)}" style="${PS}"/><div style="height:4px;background:#000;flex-shrink:0"></div><img src="${proxyImg(b)}" style="${PS}"/></div>`;
+  const singleSlide = (a) => `<div style="width:100%;aspect-ratio:9/16;background:#000;overflow:hidden"><img src="${proxyImg(a)}" style="${PS}"/></div>`;
 
   const slides_html = !preview ? null : [
     `<div style="aspect-ratio:9/16;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#000;padding:30px;text-align:center">${MAPLE}<div style="font-size:22px;font-weight:900;color:#2563eb;letter-spacing:2px;text-transform:uppercase;text-align:center;line-height:1.15;margin-top:4px">EASY AUTO LOANS<br/>CANADA</div><div style="margin-top:36px;text-align:center"><div style="display:flex;align-items:center;justify-content:center;gap:7px;font-size:19px;font-weight:900;color:white"><span style="color:#2563eb;font-size:22px">&#9733;</span>#1</div><div style="font-size:15px;font-weight:800;color:white;text-align:center;line-height:1.3;margin-top:4px">Auto Finance Company<br/>in the Country</div></div></div>`,
-
     `<div style="background:linear-gradient(180deg,#050510,#0a0a18);min-height:500px">${HDR('Unit Description')}<div style="padding:0 16px;font-size:19px;font-weight:900;color:white;margin-bottom:4px">${fields.title}</div><div style="padding:0 16px;font-size:17px;font-weight:800;color:white;margin-bottom:12px">${fields.color} ${fields.kms}</div><div style="padding:0 12px 16px;display:flex;flex-direction:column;gap:7px">${feats.map(f=>`<div style="display:flex;gap:9px;align-items:flex-start;font-size:13px;line-height:1.4;color:white"><div style="width:6px;height:6px;min-width:6px;background:white;border-radius:50%;margin-top:5px"></div><div><strong>${f.b}${f.d?' –':''}</strong><span style="color:#bbb"> ${f.d}</span></div></div>`).join('')}</div></div>`,
-
     `<div style="background:linear-gradient(180deg,#050510,#0a0a18)">${HDR('Financial Breakdown')}<div style="padding:16px;display:flex;flex-direction:column;gap:12px"><div style="font-size:22px;font-weight:800;color:white">Was: ${fields.wasP}</div><div style="font-size:26px;font-weight:900;color:white">Today: ${fields.todP}</div><div style="font-size:22px;font-weight:800;color:white">Savings: ${fields.savP}</div><div style="border-top:1px solid #1a1a2e;padding-top:12px"><div style="font-size:22px;font-weight:800;color:white">${fields.downP} down</div><div style="font-size:30px;font-weight:900;color:#22c55e">${fields.bwP}</div><div style="font-size:20px;font-weight:800;color:white">Payment is all in!!!</div><div style="font-size:24px;font-weight:900;color:#22c55e;margin-top:12px;line-height:1.3">Qualify for an upgrade in<br/>${upg}!</div></div></div></div>`,
-
     `<div style="background:linear-gradient(180deg,#05050f,#0a0a18)">${HDR('Benefits of This Deal')}<div style="padding:16px;display:flex;flex-direction:column;gap:14px">${STAR(['Penalty Free Loan',`Qualify For Upgrade In ${upg}`,'Re Conditioned Vehicle','Risk Free Delivery','Mechanical Guarantee'])}</div>${LBOT}</div>`,
-
     ...pairs.map(p => p.length === 2 ? pairSlide(p[0], p[1]) : singleSlide(p[0])),
-
     `<div style="background:linear-gradient(180deg,#05050f,#0a0a18)">${HDR('No Risk Delivery Service')}<div style="padding:12px 16px;font-size:16px;font-weight:700;color:#2563eb;line-height:1.4">Your Unit will be delivered to your front door with the following:</div><div style="padding:16px;display:flex;flex-direction:column;gap:14px">${STAR(['No Risk Delivery Service','We will help arrange your insurance','We will help set up your registration including plates','Fully reconditioned unit','Constant support after the fact in case of issues'])}</div>${LBOT}</div>`,
-
     `<div style="background:#000;display:flex;flex-direction:column;align-items:center;padding-bottom:24px">${HDR('Electronic Paperwork')}<div style="padding:12px;text-align:center;font-size:15px;font-weight:700;color:#2563eb;line-height:1.5">Paperwork done on your phone or laptop through our electronic signature partner <strong>DocuSign</strong></div><div style="border:3px solid #2563eb;border-radius:22px;padding:16px 12px;width:200px;background:#111;display:flex;flex-direction:column;align-items:center;gap:12px"><div style="background:#d4e600;padding:7px 16px;border-radius:4px;font-size:18px;font-weight:900;color:#000">&#8595; DocuSign&reg;</div>${MSML}<div style="font-size:12px;font-weight:900;color:#2563eb;letter-spacing:2px;text-align:center;line-height:1.4">EASY AUTO LOANS<br/>CANADA</div></div></div>`,
   ];
 
@@ -154,9 +153,7 @@ export default function Home() {
       </Head>
       <div style={{ display:'flex', height:'100vh', fontFamily:'Segoe UI,system-ui,sans-serif', fontSize:13, background:'#0d0d12', color:'#e2e8f0' }}>
 
-        {/* LEFT PANEL */}
         <div style={{ width:350, minWidth:350, background:'#13131a', borderRight:'1px solid #1e1e2c', overflowY:'auto', padding:16 }}>
-
           <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
             <div style={{ width:32, height:32, background:'#2563eb', borderRadius:7, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:900, fontSize:14, color:'white', flexShrink:0 }}>T</div>
             <div style={{ fontWeight:700, fontSize:15 }}>Vehicle Presentation Builder <span style={{ color:'#64748b', fontSize:11 }}>by TYME</span></div>
@@ -217,7 +214,7 @@ export default function Home() {
               : <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:4 }}>
                   {allImgs.map((src,i)=>(
                     <div key={i} onClick={()=>toggleImg(src)} style={{ aspectRatio:'4/3', borderRadius:4, overflow:'hidden', cursor:'pointer', border:`2px solid ${selImgs.includes(src)?'#2563eb':'transparent'}`, position:'relative', background:'#1a1a2e' }}>
-                      <img src={src} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} onError={e=>e.target.parentElement.style.display='none'}/>
+                      <img src={proxyImg(src)} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} onError={e=>e.target.parentElement.style.display='none'}/>
                       {selImgs.includes(src) && <div style={{ position:'absolute', top:2, right:2, width:15, height:15, background:'#2563eb', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontSize:8, color:'white', fontWeight:700 }}>✓</div>}
                     </div>
                   ))}
@@ -237,7 +234,6 @@ export default function Home() {
           <Btn style={{ width:'100%', justifyContent:'center', padding:11, fontSize:13, background:'#16a34a', marginTop:6 }} onClick={doExport}>{exporting?'⏳ Generating...':'↓ Export PDF'}</Btn>
         </div>
 
-        {/* RIGHT PREVIEW */}
         <div style={{ flex:1, overflowY:'auto', background:'#111', display:'flex', flexDirection:'column', alignItems:'center', padding:'20px 16px' }} ref={prevRef}>
           {!preview
             ? <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', color:'#64748b', textAlign:'center', gap:8 }}>
