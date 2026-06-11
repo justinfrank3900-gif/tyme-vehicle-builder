@@ -24,9 +24,10 @@ export default async function handler(req, res) {
 
 async function fetchPage(url, platform) {
   const SCRAPER_KEY = 'c12fb1626ab469fb5e3e0807397c93d7';
-  // Only use JS rendering for sites that need it
-  // D2C and Convertus are server-rendered - render=true triggers bot detection
-  const needsRender = platform === 'autotrader' || platform === 'cargurus';
+  // GoAuto needs render for Next.js, AutoTrader and CarGurus need render for JS gallery
+  // D2C (Mountain View) works without render - render triggers bot detection
+  // Convertus (Kaizen) needs render for kms/full data
+  const needsRender = ['autotrader', 'cargurus', 'goauto', 'convertus'].includes(platform);
   const scraperUrl = needsRender
     ? `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&premium=true&country_code=ca`
     : `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&country_code=ca`;
@@ -87,20 +88,22 @@ function parseVehicle(html, url, platform) {
       const odo = hero.mileage || specs.kilometres;
       if (odo) result.kms = formatKms(odo);
       if (pricing.price || pricing.listPrice) result.todayPrice = '$' + Number(pricing.price || pricing.listPrice).toLocaleString();
-      const gallery = ngData.gallery || ngData.mediaGallery || ngData.media || {};
-      const photos = gallery.photos || gallery.images || gallery.heroPhotos || gallery.allPhotos || ngData.photos || [];
-      result.images = photos.map(p => p.largeUrl || p.highResUrl || p.url || p.src || (typeof p === 'string' ? p : null)).filter(Boolean).slice(0, 25);
+      // Search ALL keys in ngData for image arrays
+      const allImgUrls = findImages(ngData);
+      result.images = allImgUrls.slice(0, 25);
     }
     if (!result.title) result.title = $('h1').first().text().trim() || $('meta[property="og:title"]').attr('content') || null;
     if (!result.kms) { const m = text.match(/([\d,]+)\s*km/i); if (m) result.kms = formatKms(m[1].replace(/,/g, '')); }
     if (!result.todayPrice) { const m = text.match(/\$\s*([\d,]+)/); if (m) result.todayPrice = '$' + m[1]; }
     if (!result.color) { const m = text.match(/Exterior Colou?r[:\s]+([A-Za-z\s]+?)(?:\n|Interior)/i); if (m) result.color = m[1].trim(); }
+    // Image fallback - extract from rendered DOM and raw HTML
     if (!result.images.length) {
       const imgSet = new Set();
       const ms = html.matchAll(/https:\/\/[a-z0-9-]+\.autotradercdn\.ca\/photos\/[^"'\s\\]+/gi);
       for (const m of ms) imgSet.add(m[0].replace(/-\d+x\d+\./, '-2048x1536.'));
-      $('img[src*="autotradercdn"]').each((_, el) => { const s = $(el).attr('src'); if (s) imgSet.add(s); });
-      result.images = [...imgSet].filter(u => !u.includes('logo')).slice(0, 25);
+      $('img[src*="autotradercdn"]').each((_, el) => { const s = $(el).attr('src'); if (s) imgSet.add(s.replace(/-\d+x\d+\./, '-2048x1536.')); });
+      $('img[data-src*="autotradercdn"]').each((_, el) => { const s = $(el).attr('data-src'); if (s) imgSet.add(s.replace(/-\d+x\d+\./, '-2048x1536.')); });
+      result.images = [...imgSet].filter(u => !u.includes('logo') && !u.includes('icon')).slice(0, 25);
     }
     const bwm = text.match(/\$\s*([\d.]+)\s*\/?\s*bi-?weekly/i);
     if (bwm) result.biweeklyPayment = '$' + Math.round(parseFloat(bwm[1])) + ' biweekly';
@@ -109,29 +112,21 @@ function parseVehicle(html, url, platform) {
 
   else if (platform === 'cargurus') {
     result.title = $('h1').first().text().trim() || $('meta[property="og:title"]').attr('content') || null;
-    // CarGurus stores mileage in miles - convert to km
-    const cgMatch = html.match(/window\.CarGurus\s*=\s*(\{[\s\S]*?\});\s*\n/) || html.match(/"listing"\s*:\s*(\{[^}]{50,}\})/);
-    if (cgMatch) {
-      try {
-        const cg = JSON.parse(cgMatch[1]);
-        const listing = cg.listing || cg;
-        if (listing.price) result.todayPrice = '$' + Number(listing.price).toLocaleString();
-        const odo = listing.mileage || listing.miles || listing.odometer;
-        if (odo) result.kms = formatKms(Math.round(Number(odo) * 1.60934));
-        if (listing.exteriorColor) result.color = listing.exteriorColor;
-        const imgs = listing.pictures || listing.images || listing.photos || [];
-        result.images = imgs.map(p => p.full || p.large || p.url || p.src || p).filter(u => typeof u === 'string' && u.startsWith('http')).slice(0, 25);
-      } catch (_) {}
-    }
     if (jsonLd) {
-      if (!result.color) result.color = jsonLd.color || null;
-      if (!result.kms && jsonLd.mileageFromOdometer?.value) {
-        // JSON-LD on CarGurus.ca is in km already
-        result.kms = formatKms(jsonLd.mileageFromOdometer.value);
+      result.color = jsonLd.color || null;
+      if (jsonLd.offers?.price) result.todayPrice = '$' + Number(jsonLd.offers.price).toLocaleString();
+      // Check unit code - KMT = km already, SMI = miles need conversion
+      if (jsonLd.mileageFromOdometer?.value) {
+        const val = Number(jsonLd.mileageFromOdometer.value);
+        const unit = jsonLd.mileageFromOdometer.unitCode || 'KMT';
+        result.kms = formatKms(unit === 'SMI' ? Math.round(val * 1.60934) : val);
       }
-      if (!result.todayPrice && jsonLd.offers?.price) result.todayPrice = '$' + Number(jsonLd.offers.price).toLocaleString();
+      // Images from JSON-LD
+      if (jsonLd.image) {
+        const imgs = Array.isArray(jsonLd.image) ? jsonLd.image : [jsonLd.image];
+        result.images = imgs.filter(u => typeof u === 'string' && u.startsWith('http')).slice(0, 25);
+      }
     }
-    // Text fallback - look for km specifically on .ca
     if (!result.kms) {
       const kmMatch = text.match(/([\d,]+)\s*km\b/i);
       const miMatch = text.match(/([\d,]+)\s*(?:miles|mi)\b/i);
@@ -140,7 +135,7 @@ function parseVehicle(html, url, platform) {
     }
     if (!result.images.length) {
       const cgSet = new Set();
-      const ms = html.matchAll(/https:\/\/[^"'\s]*(?:cargurus|vehicle-photos)[^"'\s]*\.(?:jpg|jpeg|png|webp)/gi);
+      const ms = html.matchAll(/https:\/\/[^"'\s]*(?:cargurus|vehicle-photos|carphotos)[^"'\s]*\.(?:jpg|jpeg|png|webp)/gi);
       for (const m of ms) cgSet.add(m[0]);
       $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s) cgSet.add(s); });
       $('img[src]').each((_, el) => { const s = $(el).attr('src') || ''; if (s.includes('vehicle') && s.startsWith('http')) cgSet.add(s); });
@@ -151,28 +146,52 @@ function parseVehicle(html, url, platform) {
 
   else if (platform === 'convertus') {
     result.title = $('h1').first().text().trim() || $('meta[property="og:title"]').attr('content') || null;
-    if (result.title) result.title = result.title.replace(/in\s+\w+\s*\|.*$/i, '').trim();
-    const convMatch = html.match(/var\s+vehicle\s*=\s*(\{[\s\S]*?\});\s*(?:var|\/\/|<\/script>)/) || html.match(/"vehicle"\s*:\s*(\{[\s\S]*?"vin"[\s\S]*?\})/);
+    if (result.title) result.title = result.title.replace(/in\s+\w[\w\s]*\|.*$/i, '').replace(/\s*-\s*\d+[A-Z0-9]+$/, '').trim();
+
+    // Price from meta description - most reliable for Convertus
+    const metaDesc = $('meta[name="description"]').attr('content') || $('meta[property="og:description"]').attr('content') || '';
+    const metaPrice = metaDesc.match(/\$([\d,]+)\s*CAD/i) || metaDesc.match(/only\s*\$([\d,]+)/i);
+    if (metaPrice) result.todayPrice = '$' + metaPrice[1];
+
+    // Try embedded vehicle JSON
+    const convMatch = html.match(/var\s+vehicle\s*=\s*(\{[\s\S]*?\});\s*(?:var|\/\/|<\/script>)/) ||
+                      html.match(/window\.vehicle\s*=\s*(\{[\s\S]*?\});/) ||
+                      html.match(/"vehicle"\s*:\s*(\{[\s\S]*?"vin"[\s\S]*?\})/);
     if (convMatch) {
       try {
         const v = JSON.parse(convMatch[1]);
         result.color = v.exteriorColor || v.color || v.ext_color || null;
-        if (v.odometer || v.mileage) result.kms = formatKms(v.odometer || v.mileage);
-        if (v.price || v.salePrice) result.todayPrice = '$' + Number(v.price || v.salePrice).toLocaleString();
+        if (v.odometer || v.mileage || v.kilometres) result.kms = formatKms(v.odometer || v.mileage || v.kilometres);
+        if (!result.todayPrice && (v.price || v.salePrice)) result.todayPrice = '$' + Number(v.price || v.salePrice).toLocaleString();
         if (v.msrp || v.originalPrice) result.wasPrice = '$' + Number(v.msrp || v.originalPrice).toLocaleString();
       } catch (_) {}
     }
+
+    // JSON-LD fallback
+    if (jsonLd) {
+      if (!result.color) result.color = jsonLd.color || null;
+      if (!result.kms && jsonLd.mileageFromOdometer?.value) result.kms = formatKms(jsonLd.mileageFromOdometer.value);
+      if (!result.todayPrice && jsonLd.offers?.price) result.todayPrice = '$' + Number(jsonLd.offers.price).toLocaleString();
+    }
+
     if (!result.kms) { const m = text.match(/([\d,]+)\s*km/i); if (m) result.kms = formatKms(m[1].replace(/,/g, '')); }
-    if (!result.color) { const m = text.match(/(?:Exterior|Ext)[:\s]+([A-Za-z\s]+?)(?:\n|Interior|Int)/i); if (m) result.color = m[1].trim(); }
-    if (!result.todayPrice) { const m = text.match(/\$\s*([\d,]+)/); if (m) result.todayPrice = '$' + m[1]; }
+    if (!result.color) { const m = text.match(/(?:Exterior|Ext\.?)[:\s]+([A-Za-z][A-Za-z\s]{2,20}?)(?:\n|Interior|Int\.?|,)/i); if (m) result.color = m[1].trim(); }
+
+    // Images — photomanager CDN pattern
     const imgSet = new Set();
-    const ms1 = html.matchAll(/https:\/\/[^"'\s\\]*autotradercdn\.ca\/photos\/[^"'\s\\]+/gi);
-    for (const m of ms1) imgSet.add(m[0].replace(/-\d+x\d+\./, '-2048x1536.'));
+    const ms1 = html.matchAll(/https:\/\/[^"'\s\\]*photomanager[^"'\s\\]*autotradercdn[^"'\s\\]*/gi);
+    for (const m of ms1) imgSet.add(m[0]);
+    const ms2 = html.matchAll(/https:\/\/[^"'\s\\]*autotradercdn\.ca\/photos\/[^"'\s\\]+/gi);
+    for (const m of ms2) imgSet.add(m[0].replace(/-\d+x\d+\./, '-2048x1536.'));
     $('img[src*="autotradercdn"]').each((_, el) => { const s = $(el).attr('src'); if (s) imgSet.add(s.replace(/-\d+x\d+\./, '-2048x1536.')); });
     $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s && !s.includes('logo')) imgSet.add(s); });
-    $('a[href]').each((_, el) => { const h = $(el).attr('href') || ''; if (h.startsWith('http') && /\.(jpg|jpeg|png|webp)/i.test(h) && !h.includes('logo')) imgSet.add(h); });
-    const photoJsonMatch = html.match(/"photos"\s*:\s*\[([^\]]+)\]/);
-    if (photoJsonMatch) { const us = photoJsonMatch[1].matchAll(/"(https:\/\/[^"]+\.(?:jpg|jpeg|png|webp))"/gi); for (const m of us) imgSet.add(m[1]); }
+    // og:image is first photo - try to derive the full gallery UUID pattern
+    const ogImg = $('meta[property="og:image"]').attr('content') || $('meta[name="twitter:image"]').attr('content');
+    if (ogImg && ogImg.includes('autotradercdn')) {
+      // Pattern: .../photos/import/YYYYMM/SITE/DEALER/UUID.jpg-2048x1536
+      const baseMatch = ogImg.match(/(https:\/\/[^/]+\/photos\/import\/\d+\/\d+\/\d+\/)[a-f0-9-]+(\.jpg)/i);
+      if (!baseMatch) imgSet.add(ogImg);
+    }
     result.images = [...imgSet].filter(u => !u.includes('logo') && !u.includes('icon')).slice(0, 25);
     result.features = extractFeaturesFromText(text);
   }
@@ -198,8 +217,8 @@ function parseVehicle(html, url, platform) {
     const bwm = text.match(/\$\s*([\d.]+)\s*\/?\s*bi-?weekly/i);
     if (bwm) result.biweeklyPayment = '$' + Math.round(parseFloat(bwm[1])) + ' biweekly';
     const imgSet = new Set();
-    const ms2 = html.matchAll(/https:\/\/res\.cloudinary\.com\/goauto-images\/image\/upload\/[^"'\s,)]+/g);
-    for (const m of ms2) { const u = m[0].replace(/l_v1:overlays[^/]+\//g, '').replace(/c_fit,[^/]+\//g, ''); if (u.includes('/inventory/')) imgSet.add(u); }
+    const ms3 = html.matchAll(/https:\/\/res\.cloudinary\.com\/goauto-images\/image\/upload\/[^"'\s,)]+/g);
+    for (const m of ms3) { const u = m[0].replace(/l_v1:overlays[^/]+\//g, '').replace(/c_fit,[^/]+\//g, ''); if (u.includes('/inventory/')) imgSet.add(u); }
     result.images = [...imgSet].slice(0, 25);
     result.features = extractFeaturesFromText(text);
   }
@@ -209,13 +228,14 @@ function parseVehicle(html, url, platform) {
     if (result.title) result.title = result.title.replace(/in\s+\w+\s*$|for\s+sale.*$/i, '').trim();
     const yourPrice = text.match(/Your Price:\s*\n?\s*([\d,]+)/i) || text.match(/Price:\s*([\d,]+)/i);
     if (yourPrice) result.todayPrice = '$' + yourPrice[1].replace(/,/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',');
+    if (!result.kms) { const m = text.match(/([\d,]+)\s*km/i); if (m) result.kms = formatKms(m[1].replace(/,/g, '')); }
     const colorM = text.match(/Ext(?:erior)?[:\s]+([A-Za-z]+)/i);
     if (colorM) result.color = colorM[1].trim();
     const imgSet = new Set();
     $('a[href*="imagescdn.d2cmedia"]').each((_, el) => { const h = $(el).attr('href'); if (h && h.startsWith('http')) imgSet.add(h); });
     $('img[src*="imagescdn.d2cmedia"]').each((_, el) => { const s = $(el).attr('src'); if (s && s.startsWith('http')) imgSet.add(s); });
-    const ms3 = html.matchAll(/https:\/\/imagescdn\.d2cmedia\.ca\/[^"'\s)]+\.jpg/g);
-    for (const m of ms3) imgSet.add(m[0]);
+    const ms4 = html.matchAll(/https:\/\/imagescdn\.d2cmedia\.ca\/[^"'\s)]+\.jpg/g);
+    for (const m of ms4) imgSet.add(m[0]);
     const allD2c = [...imgSet];
     const sample = allD2c.find(u => u.includes('cbe')) || allD2c.find(u => u.includes('imagescdn.d2cmedia'));
     if (sample) {
@@ -245,6 +265,29 @@ function parseVehicle(html, url, platform) {
 
   if (result.title) result.title = result.title.replace(/\s+/g, ' ').trim();
   return result;
+}
+
+// Recursively search ngVdpModel for image URL arrays
+function findImages(obj, depth = 0) {
+  if (depth > 6 || !obj || typeof obj !== 'object') return [];
+  const imageKeys = ['photos', 'images', 'heroPhotos', 'allPhotos', 'vehiclePhotos', 'galleryPhotos', 'mediaItems', 'items'];
+  for (const key of imageKeys) {
+    if (Array.isArray(obj[key]) && obj[key].length > 0) {
+      const urls = obj[key].map(p => {
+        if (typeof p === 'string' && p.startsWith('http')) return p;
+        if (typeof p === 'object') return p.largeUrl || p.highResUrl || p.url || p.src || p.photoUrl || p.imageUrl || null;
+        return null;
+      }).filter(Boolean);
+      if (urls.length > 0) return urls;
+    }
+  }
+  for (const val of Object.values(obj)) {
+    if (val && typeof val === 'object') {
+      const found = findImages(val, depth + 1);
+      if (found.length > 0) return found;
+    }
+  }
+  return [];
 }
 
 function formatKms(val) {
