@@ -1,8 +1,10 @@
 import * as cheerio from 'cheerio';
 
 export const config = {
-  maxDuration: 60,
+  maxDuration: 90,
 };
+
+const SCRAPER_KEY = 'c12fb1626ab469fb5e3e0807397c93d7';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -10,61 +12,91 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
-
   try {
-    const html = await fetchWithRetry(url);
-    const data = parseVehicle(html, url);
+    const platform = detectPlatform(url);
+    const html = await fetchPage(url, platform);
+    const data = parseVehicle(html, url, platform);
     res.status(200).json({ success: true, data });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 }
 
-async function fetchWithRetry(url, attempts = 2) {
-  // Use ScraperAPI to handle JS-rendered pages
-  const SCRAPER_KEY = 'c12fb1626ab469fb5e3e0807397c93d7';
-  const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&country_code=ca`;
+async function fetchPage(url, platform) {
+  // Strategy per platform:
+  // D2C (Mountain View) - direct fetch, no JS render needed
+  // AutoTrader/CarGurus/Kaizen - try ScraperAPI no-render first (fast), 
+  //   fall back to render=true with timeout if needed
   
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const r = await fetch(scraperUrl, { 
-        headers: { 'Accept': 'text/html' },
-        redirect: 'follow' 
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const html = await r.text();
-      if (html.length < 1000) throw new Error('Response too short, likely blocked');
-      return html;
-    } catch (e) {
-      if (i === attempts - 1) throw e;
-      await new Promise(r => setTimeout(r, 1500));
-    }
+  const directHeaders = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-CA,en;q=0.9',
+  };
+
+  if (platform === 'd2c') {
+    // D2C sites work with direct fetch - no ScraperAPI needed
+    const r = await fetch(url, { headers: directHeaders, redirect: 'follow' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const html = await r.text();
+    if (html.length < 500) throw new Error('Empty response');
+    return html;
   }
+
+  // For all other platforms: try ScraperAPI no-render first (2-3 seconds)
+  // then fall back to render=true (15-30 seconds)
+  const noRenderUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&country_code=ca`;
+  const renderUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&premium=true&country_code=ca&timeout=60000`;
+
+  // Try no-render first
+  try {
+    const r = await fetch(noRenderUrl, {
+      headers: { 'Accept': 'text/html' },
+      signal: AbortSignal.timeout(20000)
+    });
+    if (r.ok) {
+      const html = await r.text();
+      if (html.length > 5000 && !html.startsWith('An error') && !html.startsWith('{"')) {
+        return html;
+      }
+    }
+  } catch (_) {}
+
+  // Fall back to render=true
+  const r = await fetch(renderUrl, {
+    headers: { 'Accept': 'text/html' },
+    signal: AbortSignal.timeout(75000)
+  });
+  if (!r.ok) throw new Error(`ScraperAPI HTTP ${r.status}`);
+  const html = await r.text();
+  if (html.startsWith('An error') || html.length < 500) {
+    throw new Error('ScraperAPI could not fetch this page: ' + html.slice(0, 80));
+  }
+  return html;
 }
 
 function detectPlatform(url) {
-  if (url.includes('goauto')) return 'goauto';
   if (url.includes('autotrader.ca')) return 'autotrader';
   if (url.includes('cargurus.ca') || url.includes('cargurus.com')) return 'cargurus';
-  if (url.includes('kaizenauto') || url.includes('airdriedodge') || url.includes('summitram') || url.includes('chnissan') || url.includes('chhyundai') || url.includes('shawgmc') || url.includes('woodbinegm') || url.includes('okotoksgm') || url.includes('strathmoreford') || url.includes('universalford') || url.includes('summitgm')) return 'convertus';
+  if (url.includes('kaizenauto') || url.includes('airdriedodge') || url.includes('summitram') ||
+      url.includes('chnissan') || url.includes('chhyundai') || url.includes('shawgmc') ||
+      url.includes('woodbinegm') || url.includes('okotoksgm') || url.includes('strathmoreford') ||
+      url.includes('universalford') || url.includes('summitgm')) return 'convertus';
   return 'generic';
 }
 
-function parseVehicle(html, url) {
+function parseVehicle(html, url, platform) {
   const $ = cheerio.load(html);
   const text = $('body').text();
 
-  // Auto-detect platform from page content
-  let platform = detectPlatform(url);
+  // Auto-detect D2C from page content
   if (platform === 'generic') {
     if (html.includes('d2cmedia.ca') || html.includes('imagescdn.d2cmedia')) platform = 'd2c';
     else if (html.includes('convertus') || html.includes('tadvantage') || html.includes('autotradercdn.ca')) platform = 'convertus';
   }
 
-  // Try JSON-LD first
   let jsonLd = null;
   $('script[type="application/ld+json"]').each((_, el) => {
     try {
@@ -76,308 +108,133 @@ function parseVehicle(html, url) {
     } catch (_) {}
   });
 
-  const result = {
-    title: null, color: null, kms: null,
-    wasPrice: null, todayPrice: null, biweeklyPayment: null,
-    features: [], images: []
-  };
+  const result = { title: null, color: null, kms: null, wasPrice: null, todayPrice: null, biweeklyPayment: null, features: [], images: [] };
 
-  // ── AUTOTRADER.CA ─────────────────────────────────────
   if (platform === 'autotrader') {
-    // AutoTrader embeds window['ngVdpModel'] - extract with broader pattern
+    // Try ngVdpModel
     let ngData = null;
-    const ngPatterns = [
-      /window\['ngVdpModel'\]\s*=\s*(\{.+?\});\s*window/s,
-      /window\["ngVdpModel"\]\s*=\s*(\{.+?\});\s*window/s,
-      /"hero"\s*:\s*\{[^}]*"make"\s*:\s*"([^"]+)"/,
-    ];
-    for (const pat of ngPatterns) {
+    for (const pat of [/window\['ngVdpModel'\]\s*=\s*(\{.+?\});\s*window/s, /window\["ngVdpModel"\]\s*=\s*(\{.+?\});\s*window/s]) {
       const m = html.match(pat);
-      if (m && m[1] && m[1].startsWith('{')) {
-        try { ngData = JSON.parse(m[1]); break; } catch(_) {}
-      }
+      if (m && m[1]) { try { ngData = JSON.parse(m[1]); break; } catch(_) {} }
     }
-
     if (ngData) {
       const hero = ngData.hero || {};
       const specs = ngData.specifications?.specs || ngData.specifications || {};
       const pricing = ngData.price || ngData.pricing || {};
-
       result.title = [hero.year, hero.make, hero.model, hero.trim].filter(Boolean).join(' ') || null;
-      result.color = hero.colourExterior || specs.exteriorColour || specs.colour || null;
-
+      result.color = hero.colourExterior || specs.exteriorColour || null;
       const odo = hero.mileage || specs.kilometres;
       if (odo) result.kms = formatKms(odo);
-
       if (pricing.price || pricing.listPrice) result.todayPrice = '$' + Number(pricing.price || pricing.listPrice).toLocaleString();
-
-      // Multiple places AutoTrader stores images
-      const gallery = ngData.gallery || ngData.mediaGallery || {};
-      const photos = gallery.photos || gallery.images || ngData.photos || [];
-      const imgUrls = photos.map(p => p.largeUrl || p.url || p.src || p.highResUrl || (typeof p === 'string' ? p : null)).filter(Boolean);
-      result.images = imgUrls.slice(0, 25);
     }
-
-    // Always try HTML extraction as fallback/supplement
-    if (!result.title) {
-      result.title = $('h1').first().text().trim() ||
-                     $('meta[property="og:title"]').attr('content') || null;
-    }
-    if (!result.kms) {
-      const m = text.match(/([\d,]+)\s*(?:km|kilometers)/i);
-      if (m) result.kms = formatKms(m[1].replace(/,/g, ''));
-    }
-    if (!result.todayPrice) {
-      const m = text.match(/\$\s*([\d,]+)(?:\s*\+\s*(?:taxes|HST|GST))?/);
-      if (m) result.todayPrice = '$' + m[1];
-    }
-    if (!result.color) {
-      const m = text.match(/Exterior Colou?r[:\s]+([A-Za-z\s]+?)(?:\n|Interior)/i);
-      if (m) result.color = m[1].trim();
-    }
-
-    // Image fallback - extract ALL autotradercdn URLs from raw HTML
-    if (!result.images.length) {
-      const imgSet = new Set();
-      // Match any autotradercdn image URL
-      const matches = html.matchAll(/https:\/\/[a-z0-9-]+\.autotradercdn\.ca\/photos\/[^"'\s\\]+/gi);
-      for (const m of matches) {
-        // Get the highest res version
-        const url = m[0].replace(/-\d+x\d+\./, '-2048x1536.');
-        imgSet.add(url);
-      }
-      // Also check for at-media CDN
-      const atMatches = html.matchAll(/https:\/\/[^"'\s]*at-media[^"'\s]*\.(?:jpg|jpeg|png|webp)/gi);
-      for (const m of atMatches) imgSet.add(m[0]);
-      result.images = [...imgSet].filter(u => !u.includes('logo') && !u.includes('icon')).slice(0, 25);
-    }
-
+    if (!result.title) result.title = $('h1').first().text().trim() || $('meta[property="og:title"]').attr('content') || null;
+    if (!result.kms) { const m = text.match(/([\d,]+)\s*km/i); if (m) result.kms = formatKms(m[1].replace(/,/g,'')); }
+    if (!result.todayPrice) { const m = text.match(/\$\s*([\d,]+)/); if (m) result.todayPrice = '$' + m[1]; }
+    if (!result.color) { const m = text.match(/Exterior Colou?r[:\s]+([A-Za-z\s]+?)(?:\n|Interior)/i); if (m) result.color = m[1].trim(); }
+    const imgSet = new Set();
+    const ms = html.matchAll(/https:\/\/[a-z0-9-]+\.autotradercdn\.ca\/photos\/[^"'\s\\<>]+/gi);
+    for (const m of ms) imgSet.add(m[0].replace(/-\d+x\d+(\.[a-z]+)$/, '-2048x1536$1'));
+    $('img').each((_, el) => { const s = $(el).attr('src') || $(el).attr('data-src') || ''; if (s.includes('autotradercdn')) imgSet.add(s); });
+    result.images = [...imgSet].filter(u => !u.includes('logo')).slice(0, 25);
     const bwm = text.match(/\$\s*([\d.]+)\s*\/?\s*bi-?weekly/i);
     if (bwm) result.biweeklyPayment = '$' + Math.round(parseFloat(bwm[1])) + ' biweekly';
-    result.features = extractFeaturesFromText(text);
+    result.features = extractFeatures(text);
   }
 
-  // ── CARGURUS.CA ───────────────────────────────────────
   else if (platform === 'cargurus') {
-    result.title = $('h1').first().text().trim() ||
-                   $('meta[property="og:title"]').attr('content') || null;
-
-    // CarGurus embeds listing data in window.CarGurus or __NEXT_DATA__
-    const cgMatch = html.match(/window\.CarGurus\s*=\s*(\{[\s\S]*?\});\s*\n/) ||
-                    html.match(/"listing"\s*:\s*(\{[^}]{50,}\})/);
-    if (cgMatch) {
-      try {
-        const cg = JSON.parse(cgMatch[1]);
-        const listing = cg.listing || cg;
-        if (listing.price) result.todayPrice = '$' + Number(listing.price).toLocaleString();
-        if (listing.mileage) result.kms = formatKms(listing.mileage);
-        if (listing.exteriorColor) result.color = listing.exteriorColor;
-        const imgs = listing.pictures || listing.images || [];
-        result.images = imgs.map(p => p.full || p.large || p.url || p).filter(u => typeof u === 'string' && u.startsWith('http')).slice(0, 25);
-      } catch (_) {}
+    result.title = $('h1').first().text().trim() || $('meta[property="og:title"]').attr('content') || null;
+    if (jsonLd) {
+      result.color = jsonLd.color || null;
+      if (jsonLd.offers?.price) result.todayPrice = '$' + Number(jsonLd.offers.price).toLocaleString();
+      if (jsonLd.mileageFromOdometer?.value) {
+        const val = Number(jsonLd.mileageFromOdometer.value);
+        const unit = (jsonLd.mileageFromOdometer.unitCode || 'KMT').toUpperCase();
+        result.kms = formatKms(unit === 'SMI' ? Math.round(val * 1.60934) : val);
+      }
+      if (jsonLd.image) {
+        const imgs = Array.isArray(jsonLd.image) ? jsonLd.image : [jsonLd.image];
+        result.images = imgs.filter(u => typeof u === 'string' && u.startsWith('http')).slice(0, 25);
+      }
     }
+    if (!result.kms) { const m = text.match(/([\d,]+)\s*km\b/i); if (m) result.kms = formatKms(m[1].replace(/,/g,'')); }
+    if (!result.images.length) {
+      const cgSet = new Set();
+      const ms = html.matchAll(/https:\/\/[^"'\s<>]*(?:cargurus|vehicle-photos)[^"'\s<>]*\.(?:jpg|jpeg|png|webp)/gi);
+      for (const m of ms) cgSet.add(m[0]);
+      $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s) cgSet.add(s); });
+      result.images = [...cgSet].slice(0, 25);
+    }
+    result.features = extractFeatures(text);
+  }
 
+  else if (platform === 'convertus') {
+    result.title = $('h1').first().text().trim() || $('meta[property="og:title"]').attr('content') || null;
+    if (result.title) result.title = result.title.replace(/in\s+\w[\w\s]*\|.*$/i, '').trim();
+    const metaDesc = $('meta[name="description"]').attr('content') || '';
+    const metaPrice = metaDesc.match(/\$([\d,]+)\s*CAD/i) || metaDesc.match(/only\s*\$([\d,]+)/i);
+    if (metaPrice) result.todayPrice = '$' + metaPrice[1];
     if (jsonLd) {
       if (!result.color) result.color = jsonLd.color || null;
       if (!result.kms && jsonLd.mileageFromOdometer?.value) result.kms = formatKms(jsonLd.mileageFromOdometer.value);
       if (!result.todayPrice && jsonLd.offers?.price) result.todayPrice = '$' + Number(jsonLd.offers.price).toLocaleString();
     }
-    if (!result.kms) {
-      const m = text.match(/([\d,]+)\s*(?:mi|km)/i);
-      if (m) result.kms = formatKms(m[1].replace(/,/g, ''));
-    }
-    if (!result.images.length) {
-      const cgSet = new Set();
-      const cgMatches = html.matchAll(/https:\/\/[^"'\s]*(?:cargurus|static\.cg)[^"'\s]*\.(?:jpg|jpeg|png|webp)/gi);
-      for (const m of cgMatches) cgSet.add(m[0]);
-      $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s) cgSet.add(s); });
-      result.images = [...cgSet].slice(0, 25);
-    }
-    result.features = extractFeaturesFromText(text);
-  }
-
-  // ── KAIZEN / CONVERTUS / TADVANTAGE ──────────────────
-  else if (platform === 'convertus') {
-    result.title = $('h1').first().text().trim() ||
-                   $('meta[property="og:title"]').attr('content') || null;
-    if (result.title) result.title = result.title.replace(/in\s+\w+\s*\|.*$/i, '').trim();
-
-    // Convertus embeds vehicle JSON in a script tag
     const convMatch = html.match(/var\s+vehicle\s*=\s*(\{[\s\S]*?\});\s*(?:var|\/\/|<\/script>)/) ||
-                      html.match(/"vehicle"\s*:\s*(\{[\s\S]*?"vin"[\s\S]*?\})/);
+                      html.match(/window\.vehicle\s*=\s*(\{[\s\S]*?\});/);
     if (convMatch) {
       try {
         const v = JSON.parse(convMatch[1]);
-        result.color = v.exteriorColor || v.color || v.ext_color || null;
-        if (v.odometer || v.mileage) result.kms = formatKms(v.odometer || v.mileage);
-        if (v.price || v.salePrice) result.todayPrice = '$' + Number(v.price || v.salePrice).toLocaleString();
-        if (v.msrp || v.originalPrice) result.wasPrice = '$' + Number(v.msrp || v.originalPrice).toLocaleString();
+        if (!result.color) result.color = v.exteriorColor || v.color || null;
+        if (!result.kms && (v.odometer || v.mileage)) result.kms = formatKms(v.odometer || v.mileage);
+        if (!result.todayPrice && (v.price || v.salePrice)) result.todayPrice = '$' + Number(v.price || v.salePrice).toLocaleString();
       } catch (_) {}
     }
-
-    // Fallback text parsing
-    if (!result.kms) {
-      const m = text.match(/([\d,]+)\s*(?:km|kilometers)/i);
-      if (m) result.kms = formatKms(m[1].replace(/,/g, ''));
-    }
-    if (!result.color) {
-      const colorM = text.match(/(?:Exterior|Ext)[:\s]+([A-Za-z\s]+?)(?:\n|Interior|Int)/i);
-      if (colorM) result.color = colorM[1].trim();
-    }
-    if (!result.todayPrice) {
-      const m = text.match(/\$\s*([\d,]+)(?:\s*CAD)?/);
-      if (m) result.todayPrice = '$' + m[1];
-    }
-
-    // Images — Convertus/Kaizen uses autotradercdn.ca and photomanager
+    if (!result.kms) { const m = text.match(/([\d,]+)\s*km/i); if (m) result.kms = formatKms(m[1].replace(/,/g,'')); }
     const imgSet = new Set();
-    // Primary: photomanager-prd.autotradercdn.ca pattern
-    const cdnMatches = html.matchAll(/https:\/\/[^"'\s\\]*autotradercdn\.ca\/photos\/[^"'\s\\]+/gi);
-    for (const m of cdnMatches) {
-      // Upgrade to highest resolution
-      const u = m[0].replace(/-\d+x\d+\./, '-2048x1536.');
-      imgSet.add(u);
-    }
-    // Secondary: convertus CDN
-    const convMatches = html.matchAll(/https:\/\/[^"'\s\\]*(?:convertus|tadvantagebeta)[^"'\s\\]*\.(?:jpg|jpeg|png|webp)/gi);
-    for (const m of convMatches) {
-      if (!m[0].includes('logo') && !m[0].includes('Logo')) imgSet.add(m[0]);
-    }
-    // Tertiary: og:image and anchor links
+    const ms1 = html.matchAll(/https:\/\/[^"'\s\\<>]*autotradercdn\.ca\/photos\/[^"'\s\\<>]+/gi);
+    for (const m of ms1) imgSet.add(m[0].replace(/-\d+x\d+(\.[a-z]+)$/, '-2048x1536$1'));
+    $('img').each((_, el) => { const s = $(el).attr('src') || ''; if (s.includes('autotradercdn')) imgSet.add(s); });
     $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s && !s.includes('logo')) imgSet.add(s); });
-    $('a[href]').each((_, el) => {
-      const h = $(el).attr('href') || '';
-      if (h.startsWith('http') && /\.(jpg|jpeg|png|webp)/i.test(h) && !h.includes('logo')) imgSet.add(h);
-    });
-    // Check for JSON data embedded in page
-    const photoJsonMatch = html.match(/"photos"\s*:\s*\[([^\]]+)\]/);
-    if (photoJsonMatch) {
-      const urlMatches = photoJsonMatch[1].matchAll(/"(https:\/\/[^"]+\.(?:jpg|jpeg|png|webp))"/gi);
-      for (const m of urlMatches) imgSet.add(m[1]);
-    }
-
-    result.images = [...imgSet].filter(u => !u.includes('logo') && !u.includes('icon') && !u.includes('placeholder')).slice(0, 25);
-    result.features = extractFeaturesFromText(text);
+    result.images = [...imgSet].filter(u => !u.includes('logo')).slice(0, 25);
+    result.features = extractFeatures(text);
   }
 
-  // ── GOAUTO ──────────────────────────────────────────
-  else if (platform === 'goauto') {
-    result.title = $('meta[property="og:title"]').attr('content') ||
-                   $('h1').first().text().trim() || null;
-
-    let nextData = null;
-    $('script#__NEXT_DATA__').each((_, el) => {
-      try { nextData = JSON.parse($(el).html()); } catch (_) {}
-    });
-
-    if (nextData) {
-      const props = findDeep(nextData, 'vehicle') || findDeep(nextData, 'listing');
-      if (props) {
-        if (!result.title) result.title = formatTitle(props);
-        result.color = props.exteriorColour || props.color || props.exteriorColor || null;
-        result.kms = props.odometer ? formatKms(props.odometer) : null;
-        result.todayPrice = props.price ? '$' + Number(props.price).toLocaleString() : null;
-        result.wasPrice = props.regularPrice ? '$' + Number(props.regularPrice).toLocaleString() : null;
-      }
-    }
-
-    if (!result.kms) {
-      const m = text.match(/(\d[\d,]+)\s*(?:km|kilometers|kilometres)/i);
-      if (m) result.kms = formatKms(m[1].replace(/,/g, ''));
-    }
-    if (!result.todayPrice) {
-      const m = text.match(/Your Price\s*\$\s*([\d,]+)/i) || text.match(/Sale Price\s*\$\s*([\d,]+)/i);
-      if (m) result.todayPrice = '$' + m[1];
-    }
-    if (!result.wasPrice) {
-      const m = text.match(/Regular Price\s*\$\s*([\d,]+)/i) || text.match(/Was\s*\$\s*([\d,]+)/i);
-      if (m) result.wasPrice = '$' + m[1];
-    }
-    if (!result.color) {
-      const m = text.match(/Exterior Colou?r\s*\n?\s*([A-Za-z\s]+)/i);
-      if (m) result.color = m[1].trim().split('\n')[0].trim();
-    }
-
-    const bwm = text.match(/\$\s*([\d.]+)\s*\/?\s*bi-?weekly/i);
-    if (bwm) result.biweeklyPayment = '$' + Math.round(parseFloat(bwm[1])) + ' biweekly';
-
-    const imgSet = new Set();
-    const cloudinaryMatches = html.matchAll(/https:\/\/res\.cloudinary\.com\/goauto-images\/image\/upload\/[^"'\s,)]+/g);
-    for (const m of cloudinaryMatches) {
-      const u = m[0].replace(/l_v1:overlays[^/]+\//g, '').replace(/c_fit,[^/]+\//g, '');
-      if (u.includes('/inventory/')) imgSet.add(u);
-    }
-    result.images = [...imgSet].slice(0, 25);
-    result.features = extractFeaturesFromText(text);
-  }
-
-  // ── D2C MEDIA (Mountain View Dodge, most Alberta franchise dealers) ──
   else if (platform === 'd2c') {
-    result.title = $('h1').first().text().trim() ||
-                   $('meta[property="og:title"]').attr('content') || null;
+    result.title = $('h1').first().text().trim() || $('meta[property="og:title"]').attr('content') || null;
     if (result.title) result.title = result.title.replace(/in\s+\w+\s*$|for\s+sale.*$/i, '').trim();
-
     const yourPrice = text.match(/Your Price:\s*\n?\s*([\d,]+)/i) || text.match(/Price:\s*([\d,]+)/i);
     if (yourPrice) result.todayPrice = '$' + yourPrice[1].replace(/,/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',');
-    const wasM = text.match(/starting at\s*\n?\s*([\d,]+)/i);
-    if (wasM) result.wasPrice = '$' + wasM[1].replace(/,/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',');
-
+    if (!result.kms) { const m = text.match(/([\d,]+)\s*km/i); if (m) result.kms = formatKms(m[1].replace(/,/g,'')); }
     const colorM = text.match(/Ext(?:erior)?[:\s]+([A-Za-z]+)/i);
     if (colorM) result.color = colorM[1].trim();
-
     const imgSet = new Set();
-    $('a[href*="imagescdn.d2cmedia"]').each((_, el) => {
-      const h = $(el).attr('href'); if (h && h.startsWith('http')) imgSet.add(h);
-    });
-    $('img[src*="imagescdn.d2cmedia"]').each((_, el) => {
-      const s = $(el).attr('src'); if (s && s.startsWith('http')) imgSet.add(s);
-    });
-    const d2cMatches = html.matchAll(/https:\/\/imagescdn\.d2cmedia\.ca\/[^"'\s)]+\.jpg/g);
-    for (const m of d2cMatches) imgSet.add(m[0]);
-
-    // Generate numbered sequence from pattern - D2C has s8e (thumbnail) and cbe (full res) prefixes
+    $('a[href*="imagescdn.d2cmedia"]').each((_, el) => { const h = $(el).attr('href'); if (h) imgSet.add(h); });
+    $('img[src*="imagescdn.d2cmedia"]').each((_, el) => { const s = $(el).attr('src'); if (s) imgSet.add(s); });
+    const ms4 = html.matchAll(/https:\/\/imagescdn\.d2cmedia\.ca\/[^"'\s)<>]+\.jpg/g);
+    for (const m of ms4) imgSet.add(m[0]);
     const allD2c = [...imgSet];
-    const fullResSample = allD2c.find(u => u.includes('cbe')) || allD2c.find(u => u.includes('imagescdn.d2cmedia'));
-    if (fullResSample) {
-      const pm = fullResSample.match(/(https:\/\/imagescdn\.d2cmedia\.ca\/[a-z0-9]+\/\d+\/\d+\/)(\d+)(\/[^"'\s]+\.jpg)/);
-      if (pm) {
-        for (let i = 1; i <= 30; i++) imgSet.add(`${pm[1]}${i}${pm[3]}`);
-      }
+    const sample = allD2c.find(u => u.includes('cbe')) || allD2c[0];
+    if (sample) {
+      const pm = sample.match(/(https:\/\/imagescdn\.d2cmedia\.ca\/[a-z0-9]+\/\d+\/\d+\/)(\d+)(\/[^"'\s]+\.jpg)/);
+      if (pm) { for (let i = 1; i <= 30; i++) imgSet.add(`${pm[1]}${i}${pm[3]}`); }
     }
     result.images = [...imgSet].filter(u => !u.includes('logo')).slice(0, 25);
-    result.features = extractFeaturesFromText(text);
+    result.features = extractFeatures(text);
   }
 
-  // ── GENERIC FALLBACK ─────────────────────────────────
   else {
-    result.title = $('h1').first().text().trim() ||
-                   $('meta[property="og:title"]').attr('content') || null;
+    result.title = $('h1').first().text().trim() || $('meta[property="og:title"]').attr('content') || null;
     if (jsonLd) {
       result.color = jsonLd.color || null;
       if (jsonLd.mileageFromOdometer?.value) result.kms = formatKms(jsonLd.mileageFromOdometer.value);
       if (jsonLd.offers?.price) result.todayPrice = '$' + Number(jsonLd.offers.price).toLocaleString();
     }
-    if (!result.kms) {
-      const m = text.match(/([\d,]+)\s*(?:km|kilometers)/i);
-      if (m) result.kms = formatKms(m[1].replace(/,/g, ''));
-    }
-    if (!result.todayPrice) {
-      const m = text.match(/\$\s*([\d,]+)/);
-      if (m) result.todayPrice = '$' + m[1];
-    }
-
+    if (!result.kms) { const m = text.match(/([\d,]+)\s*km/i); if (m) result.kms = formatKms(m[1].replace(/,/g,'')); }
+    if (!result.todayPrice) { const m = text.match(/\$\s*([\d,]+)/); if (m) result.todayPrice = '$' + m[1]; }
     const imgSet = new Set();
     $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s) imgSet.add(s); });
-    $('a[href]').each((_, el) => {
-      const h = $(el).attr('href') || '';
-      if (h.startsWith('http') && /\.(jpg|jpeg|png|webp)/i.test(h) && !h.includes('logo')) imgSet.add(h);
-    });
-    $('img[src]').each((_, el) => {
-      const s = $(el).attr('src') || '';
-      if (s.startsWith('http') && !s.includes('logo') && !s.includes('icon') && !s.includes('sprite')) imgSet.add(s);
-    });
+    $('img[src]').each((_, el) => { const s = $(el).attr('src') || ''; if (s.startsWith('http') && !s.includes('logo')) imgSet.add(s); });
     result.images = [...imgSet].slice(0, 25);
-    result.features = extractFeaturesFromText(text);
+    result.features = extractFeatures(text);
   }
 
   if (result.title) result.title = result.title.replace(/\s+/g, ' ').trim();
@@ -390,22 +247,7 @@ function formatKms(val) {
   return n.toLocaleString() + ' kms';
 }
 
-function formatTitle(props) {
-  const parts = [props.year, props.make, props.model, props.trim].filter(Boolean);
-  return parts.join(' ') || null;
-}
-
-function findDeep(obj, key, depth = 0) {
-  if (depth > 8 || !obj || typeof obj !== 'object') return null;
-  if (obj[key]) return obj[key];
-  for (const v of Object.values(obj)) {
-    const found = findDeep(v, key, depth + 1);
-    if (found) return found;
-  }
-  return null;
-}
-
-function extractFeaturesFromText(text) {
+function extractFeatures(text) {
   const keywords = [
     ['V6', '3.3L V6 Engine: Strong highway performance and towing capability'],
     ['V8', 'V8 Engine: Powerful and capable'],
@@ -428,14 +270,10 @@ function extractFeaturesFromText(text) {
     ['Turbo', 'Turbocharged Engine: More power and efficiency'],
     ['Tow|Trailer', 'Tow Package: Ready for trailers and heavy loads'],
   ];
-  const found = [];
-  const seen = new Set();
+  const found = [], seen = new Set();
   for (const [kw, label] of keywords) {
     const key = label.split(':')[0];
-    if (!seen.has(key) && new RegExp(kw, 'i').test(text)) {
-      found.push(label);
-      seen.add(key);
-    }
+    if (!seen.has(key) && new RegExp(kw, 'i').test(text)) { found.push(label); seen.add(key); }
     if (found.length >= 10) break;
   }
   return found;
