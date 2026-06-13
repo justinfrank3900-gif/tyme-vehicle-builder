@@ -20,6 +20,9 @@ export default async function handler(req, res) {
     const html = await fetchPage(url, platform);
     const data = parseVehicle(html, url, platform);
     console.log('PLATFORM:', platform);
+    console.log('HAS_NEXT_DATA:', html ? html.includes('__NEXT_DATA__') : false);
+    console.log('HAS_AUTOSCOUT24:', html ? html.includes('autoscout24.net/listing-images') : false);
+    console.log('HAS_AUTOTRADERCDN:', html ? html.includes('autotradercdn') : false);
     console.log('HTML_LENGTH:', html ? html.length : 0);
     console.log('HAS_NGVDP:', html ? html.includes('ngVdpModel') : false);
     console.log('AUTOTRADERCDN_COUNT:', html ? (html.match(/autotradercdn/gi)||[]).length : 0);
@@ -42,11 +45,20 @@ async function fetchPage(url, platform) {
     return html;
   }
 
-  // CarGurus: Zenrows with JS render
+  // CarGurus: ScraperAPI with render (Zenrows 422s on CarGurus URLs)
   if (platform === 'cargurus') {
-    const zenUrl = `https://api.zenrows.com/v1/?apikey=${ZENROWS_KEY}&url=${encodeURIComponent(url)}&js_render=true&premium_proxy=true&wait=3000`;
-    const r = await fetch(zenUrl, { signal: AbortSignal.timeout(70000) });
-    if (!r.ok) throw new Error(`Zenrows HTTP ${r.status}`);
+    // Try direct fetch first - CarGurus sometimes allows it
+    try {
+      const r0 = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Accept-Language': 'en-CA,en;q=0.9' },
+        signal: AbortSignal.timeout(10000)
+      });
+      if (r0.ok) { const h = await r0.text(); if (h.length > 5000 && h.includes('price')) return h; }
+    } catch(_) {}
+    // Fallback: ScraperAPI no-render (CarGurus SSR)
+    const scraperUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&country_code=ca`;
+    const r = await fetch(scraperUrl, { signal: AbortSignal.timeout(30000) });
+    if (!r.ok) throw new Error(`ScraperAPI HTTP ${r.status}`);
     const html = await r.text();
     if (html.length < 500) throw new Error('Could not load CarGurus listing');
     return html;
