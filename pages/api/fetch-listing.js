@@ -265,6 +265,8 @@ function parseVehicle(html, url, platform) {
       } catch(_) {}
     }
     $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s && !s.includes('logo')) imgSet.add(s); });
+    console.log('KAIZEN_IMGSET_SIZE:', imgSet.size);
+    console.log('KAIZEN_URLS:', [...imgSet].slice(0,8).join(' || '));
     result.images = [...imgSet].filter(u => !u.includes('logo') && !u.includes('dealer-info')).slice(0, 25);
     result.features = extractFeatures(text);
   }
