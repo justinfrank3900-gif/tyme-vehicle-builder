@@ -284,22 +284,18 @@ function parseVehicle(html, url, platform) {
       } catch(_) {}
     }
     $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s && !s.includes('logo')) imgSet.add(s); });
-    console.log('KAIZEN_IMGSET_SIZE:', imgSet.size);
-    console.log('KAIZEN_URLS:', [...imgSet].slice(0,8).join(' || '));
-    // Deduplicate by UUID — same photo appears at multiple sizes, keep largest
-    const uuidMap = new Map();
+    // Deduplicate by UUID — strip size suffix first, then deduplicate
+    const seen = new Set();
+    const deduped = [];
     for (const u of imgSet) {
-      const uuidMatch = u.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
-      if (uuidMatch) {
-        const uuid = uuidMatch[1];
-        const existing = uuidMap.get(uuid);
-        // Prefer .jpg over .jpg-2048x1536 suffix variants, prefer larger size numbers
-        if (!existing || u.length > existing.length) uuidMap.set(uuid, u);
-      } else {
-        uuidMap.set(u, u); // no UUID, keep as-is
-      }
+      if (u.includes('logo') || u.includes('dealer-info') || u.includes('Best-Manage') || u.includes('best-manage')) continue;
+      // Strip size suffix like .jpg-2048x1536 or -800x600
+      const clean = u.replace(/\.jpg-\d+x\d+$/, '.jpg').replace(/-\d+x\d+(\.(jpg|jpeg|png|webp))$/, '$1');
+      const uuidMatch = clean.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+      const key = uuidMatch ? uuidMatch[1] : clean;
+      if (!seen.has(key)) { seen.add(key); deduped.push(clean); }
     }
-    result.images = [...uuidMap.values()].filter(u => !u.includes('logo') && !u.includes('dealer-info')).slice(0, 25);
+    result.images = deduped.slice(0, 25);
     result.features = extractFeatures(text);
   }
 
