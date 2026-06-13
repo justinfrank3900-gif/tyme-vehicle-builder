@@ -275,6 +275,7 @@ export default function Home() {
         const c = await window.html2canvas(slide, {
           scale:2, useCORS:true, allowTaint:false,
           backgroundColor:'#000000', logging:false, imageTimeout:20000,
+          width:390, windowWidth:390,
         });
         const imgData = c.toDataURL('image/jpeg', 0.93);
         const ph = Math.round((c.height/c.width)*W);
@@ -295,19 +296,28 @@ export default function Home() {
   const LOGO_BOT = `<div style="display:flex;flex-direction:column;align-items:center;padding:16px;gap:4px"><img src="${LOGO}" style="width:110px;height:110px;object-fit:contain" crossorigin="anonymous"/></div>`;
   const STAR = items => items.map(t => `<div style="display:flex;align-items:center;gap:12px;font-size:19px;font-weight:700;color:white;padding:4px 0"><span style="color:#2196f3;font-size:24px;flex-shrink:0;text-shadow:0 0 10px rgba(33,150,243,0.8)">★</span>${t}</div>`).join('');
 
-  // Fixed photo slides - use explicit heights not aspect-ratio on inner images
+  // Fixed photo slides - explicit pixel heights, no flex, no aspect-ratio
+  // 390px wide at 9:16 = 693px tall. Each photo in pair = 345px
+  const SLIDE_H = 693;
+  const PHOTO_H = 345;
   const pairSlide = (a, b) => {
     const pA = a.startsWith('data:') ? a : proxyImg(a);
     const pB = b.startsWith('data:') ? b : proxyImg(b);
-    return `<div style="width:100%;aspect-ratio:9/16;display:flex;flex-direction:column;overflow:hidden;background:#000">
-      <div style="flex:1;overflow:hidden"><img src="${pA}" style="width:100%;height:100%;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/></div>
-      <div style="height:3px;background:#000;flex-shrink:0"></div>
-      <div style="flex:1;overflow:hidden"><img src="${pB}" style="width:100%;height:100%;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/></div>
+    return `<div style="width:390px;height:${SLIDE_H}px;overflow:hidden;background:#000;display:block">
+      <div style="width:390px;height:${PHOTO_H}px;overflow:hidden;display:block">
+        <img src="${pA}" style="width:390px;height:${PHOTO_H}px;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/>
+      </div>
+      <div style="width:390px;height:3px;background:#000;display:block"></div>
+      <div style="width:390px;height:${PHOTO_H}px;overflow:hidden;display:block">
+        <img src="${pB}" style="width:390px;height:${PHOTO_H}px;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/>
+      </div>
     </div>`;
   };
   const singleSlide = (a) => {
     const pA = a.startsWith('data:') ? a : proxyImg(a);
-    return `<div style="width:100%;aspect-ratio:9/16;overflow:hidden;background:#000"><img src="${pA}" style="width:100%;height:100%;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/></div>`;
+    return `<div style="width:390px;height:${SLIDE_H}px;overflow:hidden;background:#000;display:block">
+      <img src="${pA}" style="width:390px;height:${SLIDE_H}px;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/>
+    </div>`;
   };
 
   const slides_html = !preview ? null : [

@@ -25,11 +25,6 @@ export default async function handler(req, res) {
 }
 
 async function fetchPage(url, platform) {
-  // Strategy per platform:
-  // D2C (Mountain View) - direct fetch, no JS render needed
-  // AutoTrader/CarGurus/Kaizen - try ScraperAPI no-render first (fast), 
-  //   fall back to render=true with timeout if needed
-  
   const directHeaders = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -37,44 +32,39 @@ async function fetchPage(url, platform) {
   };
 
   if (platform === 'd2c') {
-    // D2C sites work with direct fetch - no ScraperAPI needed
-    const r = await fetch(url, { headers: directHeaders, redirect: 'follow' });
+    const r = await fetch(url, { headers: directHeaders, redirect: 'follow', signal: AbortSignal.timeout(15000) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const html = await r.text();
     if (html.length < 500) throw new Error('Empty response');
     return html;
   }
 
-  // For all other platforms: try ScraperAPI no-render first (2-3 seconds)
-  // then fall back to render=true (15-30 seconds)
-  const noRenderUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&country_code=ca`;
+  // Paid ScraperAPI — render=true with premium for JS-heavy sites
   const renderUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&premium=true&country_code=ca&timeout=60000`;
 
-  // Try no-render first
   try {
-    const r = await fetch(noRenderUrl, {
+    const r = await fetch(renderUrl, {
+      headers: { 'Accept': 'text/html' },
+      signal: AbortSignal.timeout(80000)
+    });
+    if (!r.ok) throw new Error(`ScraperAPI HTTP ${r.status}`);
+    const html = await r.text();
+    if (html.startsWith('An error') || html.length < 500) {
+      throw new Error('ScraperAPI blocked: ' + html.slice(0, 80));
+    }
+    return html;
+  } catch(e) {
+    // If render fails, try without render as fallback
+    const noRenderUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&country_code=ca`;
+    const r2 = await fetch(noRenderUrl, {
       headers: { 'Accept': 'text/html' },
       signal: AbortSignal.timeout(20000)
     });
-    if (r.ok) {
-      const html = await r.text();
-      if (html.length > 5000 && !html.startsWith('An error') && !html.startsWith('{"')) {
-        return html;
-      }
-    }
-  } catch (_) {}
-
-  // Fall back to render=true
-  const r = await fetch(renderUrl, {
-    headers: { 'Accept': 'text/html' },
-    signal: AbortSignal.timeout(75000)
-  });
-  if (!r.ok) throw new Error(`ScraperAPI HTTP ${r.status}`);
-  const html = await r.text();
-  if (html.startsWith('An error') || html.length < 500) {
-    throw new Error('ScraperAPI could not fetch this page: ' + html.slice(0, 80));
+    if (!r2.ok) throw new Error(`ScraperAPI HTTP ${r2.status}`);
+    const html2 = await r2.text();
+    if (html2.startsWith('An error') || html2.length < 500) throw new Error('ScraperAPI could not fetch: ' + html2.slice(0, 80));
+    return html2;
   }
-  return html;
 }
 
 function detectPlatform(url) {
