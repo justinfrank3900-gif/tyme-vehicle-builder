@@ -284,6 +284,7 @@ function parseVehicle(html, url, platform) {
       } catch(_) {}
     }
     $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s && !s.includes('logo')) imgSet.add(s); });
+    console.log('ALL_URLS:', [...imgSet].join(' || '));
     // Deduplicate by UUID — strip size suffix first, then deduplicate
     const seen = new Set();
     const deduped = [];
