@@ -25,19 +25,17 @@ export default async function handler(req, res) {
 }
 
 async function fetchPage(url, platform) {
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'en-CA,en;q=0.9',
-    'Cache-Control': 'no-cache',
-  };
-
-  // AutoTrader and CarGurus MUST use ScraperAPI render=true - they are JS-rendered
-  // Kaizen/Convertus and D2C work with direct fetch
+  // AutoTrader and CarGurus are JS-rendered — MUST use ScraperAPI render=true
+  // D2C (Mountain View) and Convertus (Kaizen) work with direct fetch
   const needsRender = platform === 'autotrader' || platform === 'cargurus';
 
   if (!needsRender) {
-    // Direct fetch for D2C, Convertus/Kaizen, and generic
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-CA,en;q=0.9',
+      'Cache-Control': 'no-cache',
+    };
     try {
       const r = await fetch(url, { headers, redirect: 'follow', signal: AbortSignal.timeout(15000) });
       if (r.ok) {
@@ -53,7 +51,21 @@ async function fetchPage(url, platform) {
     throw new Error('Could not fetch listing');
   }
 
-  // ScraperAPI render=true for AutoTrader and CarGurus
+  // AutoTrader: use premium residential IPs (autotrader blocks datacenter IPs)
+  // CarGurus: render=true with datacenter is fine
+  if (platform === 'autotrader') {
+    const scraperUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&premium=true&country_code=ca&timeout=60000`;
+    const r = await fetch(scraperUrl, {
+      headers: { 'Accept': 'text/html' },
+      signal: AbortSignal.timeout(85000)
+    });
+    if (!r.ok) throw new Error(`ScraperAPI HTTP ${r.status}`);
+    const html = await r.text();
+    if (html.startsWith('An error') || html.length < 500) throw new Error('Could not load AutoTrader listing');
+    return html;
+  }
+
+  // CarGurus: render=true datacenter
   const scraperUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&country_code=ca&timeout=60000`;
   const r = await fetch(scraperUrl, {
     headers: { 'Accept': 'text/html' },
@@ -79,7 +91,6 @@ function parseVehicle(html, url, platform) {
   const $ = cheerio.load(html);
   const text = $('body').text();
 
-  // Auto-detect D2C from page content
   if (platform === 'generic') {
     if (html.includes('d2cmedia.ca') || html.includes('imagescdn.d2cmedia')) platform = 'd2c';
     else if (html.includes('convertus') || html.includes('tadvantage') || html.includes('autotradercdn.ca')) platform = 'convertus';
@@ -99,7 +110,6 @@ function parseVehicle(html, url, platform) {
   const result = { title: null, color: null, kms: null, wasPrice: null, todayPrice: null, biweeklyPayment: null, features: [], images: [] };
 
   if (platform === 'autotrader') {
-    // Try ngVdpModel
     let ngData = null;
     for (const pat of [/window\['ngVdpModel'\]\s*=\s*(\{.+?\});\s*window/s, /window\["ngVdpModel"\]\s*=\s*(\{.+?\});\s*window/s]) {
       const m = html.match(pat);
@@ -178,9 +188,31 @@ function parseVehicle(html, url, platform) {
     }
     if (!result.kms) { const m = text.match(/([\d,]+)\s*km/i); if (m) result.kms = formatKms(m[1].replace(/,/g,'')); }
     const imgSet = new Set();
+    // Pattern 1: autotradercdn photos embedded in convertus pages
     const ms1 = html.matchAll(/https:\/\/[^"'\s\\<>]*autotradercdn\.ca\/photos\/[^"'\s\\<>]+/gi);
     for (const m of ms1) imgSet.add(m[0].replace(/-\d+x\d+(\.[a-z]+)$/, '-2048x1536$1'));
-    $('img').each((_, el) => { const s = $(el).attr('src') || ''; if (s.includes('autotradercdn')) imgSet.add(s); });
+    // Pattern 2: convertus/tadvantage CDN (photos.tadvantage.ca or similar)
+    const ms2 = html.matchAll(/https:\/\/[^"'\s\\<>]*(?:tadvantage|convertus)[^"'\s\\<>]*\/(?:photos|images|vehicles?)\/[^"'\s\\<>]+\.(?:jpg|jpeg|png|webp)/gi);
+    for (const m of ms2) imgSet.add(m[0]);
+    // Pattern 3: img tags with data-src or src pointing to any CDN
+    $('img').each((_, el) => {
+      const s = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || '';
+      if (s.includes('autotradercdn') || s.includes('tadvantage') || s.includes('convertus') || s.includes('vehicle')) {
+        if (s.startsWith('http') && !s.includes('logo')) imgSet.add(s);
+      }
+    });
+    // Pattern 4: JSON vehicle data embedded in page
+    const photoJsonMatch = html.match(/"photos"\s*:\s*(\[[^\]]+\])/i) || html.match(/"images"\s*:\s*(\[[^\]]+\])/i);
+    if (photoJsonMatch) {
+      try {
+        const photos = JSON.parse(photoJsonMatch[1]);
+        for (const p of photos) {
+          const u = typeof p === 'string' ? p : (p.url || p.src || p.large || p.original || '');
+          if (u && u.startsWith('http') && !u.includes('logo')) imgSet.add(u);
+        }
+      } catch(_) {}
+    }
+    // Pattern 5: og:image and any large image found
     $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s && !s.includes('logo')) imgSet.add(s); });
     result.images = [...imgSet].filter(u => !u.includes('logo')).slice(0, 25);
     result.features = extractFeatures(text);
