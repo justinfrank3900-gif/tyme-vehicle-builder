@@ -19,6 +19,12 @@ export default async function handler(req, res) {
     const platform = detectPlatform(url);
     const html = await fetchPage(url, platform);
     const data = parseVehicle(html, url, platform);
+    console.log('PLATFORM:', platform);
+    console.log('HTML_LENGTH:', html ? html.length : 0);
+    console.log('HAS_NGVDP:', html ? html.includes('ngVdpModel') : false);
+    console.log('AUTOTRADERCDN_COUNT:', html ? (html.match(/autotradercdn/gi)||[]).length : 0);
+    console.log('IMAGE_COUNT:', data.images ? data.images.length : 0);
+    console.log('FIRST_IMAGE:', data.images && data.images[0] ? data.images[0].slice(0,80) : 'none');
     res.status(200).json({ success: true, data });
   } catch (e) {
     res.status(500).json({ error: e.message });
