@@ -225,7 +225,15 @@ function parseVehicle(html, url, platform) {
     }
     if (!result.kms) { const m = text.match(/([\d,]+)\s*km/i); if (m) result.kms = formatKms(m[1].replace(/,/g,'')); }
     const imgSet = new Set();
-    // Pattern 1: __NEXT_DATA__ (Kaizen/Convertus pages also embed this on newer builds)
+
+    // Extract vehicle-specific path segment from first photo URL to filter out other units
+    // Photo URLs: /photos/import/YYYYMM/DEALER_ID/VEHICLE_SEQ/UUID.jpg
+    // We find the vehicle seq ID from the first photo and only keep photos with that ID
+    let vehiclePhotoPath = null;
+    const firstPhotoMatch = html.match(/https:\/\/1s-photomanager-prd\.autotradercdn\.ca\/photos\/import\/\d+\/\d+\/(\d+)\//);
+    if (firstPhotoMatch) vehiclePhotoPath = firstPhotoMatch[1];
+
+    // Pattern 1: __NEXT_DATA__
     const nextDataMatch2 = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
     if (nextDataMatch2) {
       try {
@@ -239,27 +247,26 @@ function parseVehicle(html, url, platform) {
         }
       } catch(_) {}
     }
-    // Pattern 2: autoscout24 CDN (Kaizen migrated from autotradercdn to this)
+    // Pattern 2: autoscout24 CDN
     for (const m of html.matchAll(/https:\/\/prod\.pictures\.autoscout24\.net\/listing-images\/[^"'\s<>]+\.(?:jpg|webp)/gi)) {
       const u = m[0].replace(/\/\d+x\d+\.(jpg|webp)$/, '/1280x960.jpg');
       if (!u.includes('dealer-info') && !u.includes('logo')) imgSet.add(u);
     }
-    // Pattern 3: autotradercdn (includes 1s-photomanager-prd.autotradercdn.ca/photos/import/...)
-    // These URLs may not have file extensions
-    for (const m of html.matchAll(/https:\/\/[^"'\s\\<>]*autotradercdn\.ca\/photos\/[^"'\s\\<>?"]+/gi)) {
-      const u = m[0].split('?')[0];
-      if (!u.includes('logo') && !u.includes('dealer') && !u.includes('badge')) imgSet.add(u);
-    }
-    // Pattern 3b: 1s-photomanager-prd subdomain specifically
+    // Pattern 3: 1s-photomanager-prd - filter to vehicle-specific path only
     for (const m of html.matchAll(/https:\/\/1s-photomanager-prd\.autotradercdn\.ca\/[^"'\s\\<>?"]+/gi)) {
       const u = m[0].split('?')[0];
-      if (!u.includes('logo')) imgSet.add(u);
+      if (u.includes('logo')) continue;
+      if (vehiclePhotoPath && !u.includes(`/${vehiclePhotoPath}/`)) continue;
+      imgSet.add(u);
     }
-    // Pattern 4: img tags
+    // Pattern 4: img tags - filter to vehicle path
     $('img').each((_, el) => {
       const s = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || '';
-      if (s.includes('autotradercdn') || s.includes('tadvantage') || s.includes('autoscout24')) {
-        if (s.startsWith('http') && !s.includes('logo') && !s.includes('dealer-info')) imgSet.add(s);
+      if (!s.startsWith('http') || s.includes('logo') || s.includes('dealer-info')) return;
+      if (s.includes('1s-photomanager-prd')) {
+        if (!vehiclePhotoPath || s.includes(`/${vehiclePhotoPath}/`)) imgSet.add(s);
+      } else if (s.includes('tadvantage') || s.includes('autoscout24')) {
+        imgSet.add(s);
       }
     });
     // Pattern 5: JSON photos array
@@ -269,7 +276,9 @@ function parseVehicle(html, url, platform) {
         const photos = JSON.parse(photoJsonMatch[1]);
         for (const p of photos) {
           const u = typeof p === 'string' ? p : (p.url || p.src || p.large || p.original || '');
-          if (u && u.startsWith('http') && !u.includes('logo')) imgSet.add(u);
+          if (u && u.startsWith('http') && !u.includes('logo')) {
+            if (!vehiclePhotoPath || u.includes(`/${vehiclePhotoPath}/`)) imgSet.add(u);
+          }
         }
       } catch(_) {}
     }
