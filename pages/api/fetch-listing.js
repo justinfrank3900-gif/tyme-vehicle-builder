@@ -64,7 +64,16 @@ async function fetchPage(url, platform) {
     return html;
   }
 
-  // D2C and Convertus/Kaizen: direct fetch first, ScraperAPI fallback
+  // Convertus/Kaizen: needs JS rendering to get full photo gallery
+  if (platform === 'convertus') {
+    const zenUrl = `https://api.zenrows.com/v1/?apikey=${ZENROWS_KEY}&url=${encodeURIComponent(url)}&js_render=true&wait=4000`;
+    const r = await fetch(zenUrl, { signal: AbortSignal.timeout(60000) });
+    if (!r.ok) throw new Error(`Zenrows HTTP ${r.status}`);
+    const html = await r.text();
+    if (html.length > 3000) return html;
+  }
+
+  // D2C and generic: direct fetch first, ScraperAPI fallback
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
