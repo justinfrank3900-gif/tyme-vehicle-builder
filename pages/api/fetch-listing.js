@@ -42,13 +42,13 @@ async function fetchPage(url, platform) {
     return html;
   }
 
-  // CarGurus: ScraperAPI render=true
+  // CarGurus: Zenrows with JS render
   if (platform === 'cargurus') {
-    const scraperUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&country_code=ca&timeout=60000`;
-    const r = await fetch(scraperUrl, { signal: AbortSignal.timeout(80000) });
-    if (!r.ok) throw new Error(`ScraperAPI HTTP ${r.status}`);
+    const zenUrl = `https://api.zenrows.com/v1/?apikey=${ZENROWS_KEY}&url=${encodeURIComponent(url)}&js_render=true&premium_proxy=true&wait=3000`;
+    const r = await fetch(zenUrl, { signal: AbortSignal.timeout(70000) });
+    if (!r.ok) throw new Error(`Zenrows HTTP ${r.status}`);
     const html = await r.text();
-    if (html.startsWith('An error') || html.length < 500) throw new Error('Could not load CarGurus listing');
+    if (html.length < 500) throw new Error('Could not load CarGurus listing');
     return html;
   }
 
@@ -204,14 +204,36 @@ function parseVehicle(html, url, platform) {
     }
     if (!result.kms) { const m = text.match(/([\d,]+)\s*km/i); if (m) result.kms = formatKms(m[1].replace(/,/g,'')); }
     const imgSet = new Set();
-    const ms1 = html.matchAll(/https:\/\/[^"'\s\\<>]*autotradercdn\.ca\/photos\/[^"'\s\\<>]+/gi);
-    for (const m of ms1) imgSet.add(m[0].replace(/-\d+x\d+(\.[a-z]+)$/, '-2048x1536$1'));
+    // Pattern 1: __NEXT_DATA__ (Kaizen/Convertus pages also embed this on newer builds)
+    const nextDataMatch2 = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (nextDataMatch2) {
+      try {
+        const nd = JSON.parse(nextDataMatch2[1]);
+        const imgs = nd?.props?.pageProps?.listingDetails?.images;
+        if (Array.isArray(imgs)) {
+          for (const u of imgs) {
+            if (u && u.startsWith('http') && !u.includes('logo') && !u.includes('dealer-info'))
+              imgSet.add(u.replace(/\/\d+x\d+\.(webp|jpg)$/, '/1280x960.jpg'));
+          }
+        }
+      } catch(_) {}
+    }
+    // Pattern 2: autoscout24 CDN (Kaizen migrated from autotradercdn to this)
+    for (const m of html.matchAll(/https:\/\/prod\.pictures\.autoscout24\.net\/listing-images\/[^"'\s<>]+\.(?:jpg|webp)/gi)) {
+      const u = m[0].replace(/\/\d+x\d+\.(jpg|webp)$/, '/1280x960.jpg');
+      if (!u.includes('dealer-info') && !u.includes('logo')) imgSet.add(u);
+    }
+    // Pattern 3: legacy autotradercdn
+    for (const m of html.matchAll(/https:\/\/[^"'\s\\<>]*autotradercdn\.ca\/photos\/[^"'\s\\<>]+/gi))
+      imgSet.add(m[0].replace(/-\d+x\d+(\.[a-z]+)$/, '-2048x1536$1'));
+    // Pattern 4: img tags
     $('img').each((_, el) => {
       const s = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || '';
-      if (s.includes('autotradercdn') || s.includes('tadvantage') || s.includes('convertus') || s.includes('vehicle')) {
-        if (s.startsWith('http') && !s.includes('logo')) imgSet.add(s);
+      if (s.includes('autotradercdn') || s.includes('tadvantage') || s.includes('autoscout24')) {
+        if (s.startsWith('http') && !s.includes('logo') && !s.includes('dealer-info')) imgSet.add(s);
       }
     });
+    // Pattern 5: JSON photos array
     const photoJsonMatch = html.match(/"photos"\s*:\s*(\[[^\]]+\])/i) || html.match(/"images"\s*:\s*(\[[^\]]+\])/i);
     if (photoJsonMatch) {
       try {
@@ -223,7 +245,7 @@ function parseVehicle(html, url, platform) {
       } catch(_) {}
     }
     $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s && !s.includes('logo')) imgSet.add(s); });
-    result.images = [...imgSet].filter(u => !u.includes('logo')).slice(0, 25);
+    result.images = [...imgSet].filter(u => !u.includes('logo') && !u.includes('dealer-info')).slice(0, 25);
     result.features = extractFeatures(text);
   }
 
