@@ -238,6 +238,10 @@ function parseVehicle(html, url, platform) {
     // Pattern 3: legacy autotradercdn
     for (const m of html.matchAll(/https:\/\/[^"'\s\\<>]*autotradercdn\.ca\/photos\/[^"'\s\\<>]+/gi))
       imgSet.add(m[0].replace(/-\d+x\d+(\.[a-z]+)$/, '-2048x1536$1'));
+    // Pattern 3b: ls-photomanager-prd.autotrader CDN (Kaizen/Convertus)
+    for (const m of html.matchAll(/https:\/\/ls-photomanager-prd[^"'\s<>]+\.(?:jpg|jpeg|png|webp)/gi)) {
+      if (!m[0].includes('logo')) imgSet.add(m[0]);
+    }
     // Pattern 4: img tags
     $('img').each((_, el) => {
       const s = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || '';
