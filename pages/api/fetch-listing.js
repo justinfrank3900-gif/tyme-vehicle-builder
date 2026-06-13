@@ -40,7 +40,7 @@ async function fetchPage(url, platform) {
   }
 
   // Paid ScraperAPI — render=true with premium for JS-heavy sites
-  const renderUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&premium=true&country_code=ca&timeout=60000`;
+  const renderUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&country_code=ca&timeout=60000`;
 
   try {
     const r = await fetch(renderUrl, {
