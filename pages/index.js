@@ -166,11 +166,56 @@ export default function Home() {
   async function fetchListing() {
     if (!url.trim()) return setStatus({msg:'Paste a listing URL first.',type:'err'});
     clearAll();
-    setStatus({msg:'Pulling listing data... (up to 30 seconds)',type:'info'});
+    setStatus({msg:'Pulling listing data...',type:'info'});
+
+    const trimUrl = url.trim();
+    const isAutoTrader = trimUrl.includes('autotrader.ca');
+
+    // For AutoTrader: scrape directly from the browser using CORS proxy
+    // This bypasses server-side IP blocking since the request comes from user's browser
+    if (isAutoTrader) {
+      try {
+        setStatus({msg:'Fetching AutoTrader listing... (15-20 seconds)',type:'info'});
+        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(trimUrl)}`;
+        const r = await fetch(proxyUrl);
+        const json = await r.json();
+        const html = json.contents || '';
+        if (html.length > 1000) {
+          // Extract images from HTML
+          const imgMatches = [...html.matchAll(/https:\/\/[a-z0-9-]+\.autotradercdn\.ca\/photos\/[^"'\s\\<>]+/gi)];
+          const imgSet = new Set();
+          for (const m of imgMatches) imgSet.add(m[0].replace(/-\d+x\d+(\.[a-z]+)$/, '-2048x1536$1'));
+          const imgs = [...imgSet].filter(u => !u.includes('logo')).slice(0, 25);
+
+          // Extract title from og:title
+          const titleM = html.match(/<meta[^>]+property="og:title"[^>]+content="([^"]+)"/i) ||
+                         html.match(/content="([^"]+)"[^>]+property="og:title"/i);
+          const title = titleM ? titleM[1].replace(/\s*\|.*$/, '').trim() : '';
+
+          // Extract price
+          const priceM = html.match(/\$\s*([\d,]+)(?:\s*\+\s*taxes)?/);
+          const price = priceM ? '$' + priceM[1] : '';
+
+          // Extract kms
+          const kmsM = html.match(/([\d,]+)\s*km/i);
+          const kms = kmsM ? parseInt(kmsM[1].replace(/,/g,'')).toLocaleString() + ' kms' : '';
+
+          setFields(prev => ({...prev, title, kms, todP: price}));
+          setAllImgs(imgs);
+          setStatus(imgs.length
+            ? {msg:`✓ ${title||'Vehicle'} — ${imgs.length} photos loaded.`, type:'ok'}
+            : {msg:`✓ ${title||'Data loaded'} — no images. Use Paste URLs tab.`, type:'warn'});
+          return;
+        }
+      } catch(_) {}
+      // If allorigins fails, fall through to server
+    }
+
+    // Server-side fetch for all other platforms
     try {
       const r = await fetch('/api/fetch-listing', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({url: url.trim()})
+        body: JSON.stringify({url: trimUrl})
       });
       const json = await r.json();
       if (!json.success) throw new Error(json.error || 'Server error');
