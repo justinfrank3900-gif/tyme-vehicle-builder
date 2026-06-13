@@ -64,11 +64,11 @@ async function fetchPage(url, platform) {
     return html;
   }
 
-  // Convertus/Kaizen: needs JS rendering to get full photo gallery
+  // Convertus/Kaizen: needs JS rendering for photo gallery - use ScraperAPI render
   if (platform === 'convertus') {
-    const zenUrl = `https://api.zenrows.com/v1/?apikey=${ZENROWS_KEY}&url=${encodeURIComponent(url)}&js_render=true&wait=4000`;
-    const r = await fetch(zenUrl, { signal: AbortSignal.timeout(60000) });
-    if (!r.ok) throw new Error(`Zenrows HTTP ${r.status}`);
+    const scraperUrl = `https://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&country_code=ca&timeout=25000`;
+    const r = await fetch(scraperUrl, { signal: AbortSignal.timeout(40000) });
+    if (!r.ok) throw new Error(`ScraperAPI HTTP ${r.status}`);
     const html = await r.text();
     if (html.length > 3000) return html;
   }
