@@ -286,7 +286,20 @@ function parseVehicle(html, url, platform) {
     $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s && !s.includes('logo')) imgSet.add(s); });
     console.log('KAIZEN_IMGSET_SIZE:', imgSet.size);
     console.log('KAIZEN_URLS:', [...imgSet].slice(0,8).join(' || '));
-    result.images = [...imgSet].filter(u => !u.includes('logo') && !u.includes('dealer-info')).slice(0, 25);
+    // Deduplicate by UUID — same photo appears at multiple sizes, keep largest
+    const uuidMap = new Map();
+    for (const u of imgSet) {
+      const uuidMatch = u.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+      if (uuidMatch) {
+        const uuid = uuidMatch[1];
+        const existing = uuidMap.get(uuid);
+        // Prefer .jpg over .jpg-2048x1536 suffix variants, prefer larger size numbers
+        if (!existing || u.length > existing.length) uuidMap.set(uuid, u);
+      } else {
+        uuidMap.set(u, u); // no UUID, keep as-is
+      }
+    }
+    result.images = [...uuidMap.values()].filter(u => !u.includes('logo') && !u.includes('dealer-info')).slice(0, 25);
     result.features = extractFeatures(text);
   }
 
