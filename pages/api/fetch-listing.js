@@ -66,15 +66,7 @@ async function fetchPage(url, platform) {
 
   // Convertus/Kaizen: Zenrows Scraping Browser (real Chrome, full JS render)
   if (platform === 'convertus') {
-    const jsInstructions = JSON.stringify([
-      {"evaluate": "window.scrollTo(0, document.body.scrollHeight)"},
-      {"wait": 2000},
-      {"evaluate": "window.scrollTo(0, document.body.scrollHeight)"},
-      {"wait": 2000},
-      {"evaluate": "window.scrollTo(0, 0)"},
-      {"wait": 500}
-    ]);
-    const zenUrl = `https://api.zenrows.com/v1/?apikey=${ZENROWS_KEY}&url=${encodeURIComponent(url)}&js_render=true&wait=3000&js_instructions=${encodeURIComponent(jsInstructions)}`;
+    const zenUrl = `https://api.zenrows.com/v1/?apikey=${ZENROWS_KEY}&url=${encodeURIComponent(url)}&js_render=true&wait=5000`;
     const r = await fetch(zenUrl, { signal: AbortSignal.timeout(55000) });
     if (!r.ok) throw new Error(`Zenrows HTTP ${r.status}`);
     const html = await r.text();
@@ -277,7 +269,25 @@ function parseVehicle(html, url, platform) {
         imgSet.add(s);
       }
     });
-    // Pattern 5: JSON photos array
+    // Pattern 6: Extract UUIDs from gallery data attributes and reconstruct URLs
+    // Kaizen embeds all photo UUIDs in slider config even if not loaded as img tags
+    const basePhotoPath = vehiclePhotoPath
+      ? `https://1s-photomanager-prd.autotradercdn.ca/photos/import/202603/2720/${vehiclePhotoPath}/`
+      : null;
+    if (basePhotoPath) {
+      // Find all UUIDs in the HTML that appear near our known vehicle path
+      const allUuids = [...html.matchAll(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/gi)]
+        .map(m => m[1])
+        .filter((v, i, a) => a.indexOf(v) === i); // unique
+      for (const uuid of allUuids) {
+        // Only add if this UUID appears near our vehicle photo path in the HTML
+        const idx = html.indexOf(uuid);
+        const ctx = html.slice(Math.max(0, idx-200), idx+50);
+        if (ctx.includes(vehiclePhotoPath) || ctx.includes('photomanager') || ctx.includes('gallery') || ctx.includes('slide')) {
+          imgSet.add(`${basePhotoPath}${uuid}.jpg`);
+        }
+      }
+    }
     const photoJsonMatch = html.match(/"photos"\s*:\s*(\[[^\]]+\])/i) || html.match(/"images"\s*:\s*(\[[^\]]+\])/i);
     if (photoJsonMatch) {
       try {
