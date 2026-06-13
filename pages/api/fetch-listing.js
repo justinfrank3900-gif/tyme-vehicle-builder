@@ -66,7 +66,7 @@ async function fetchPage(url, platform) {
 
   // Convertus/Kaizen: Zenrows Scraping Browser (real Chrome, full JS render)
   if (platform === 'convertus') {
-    const jsInstructions = JSON.stringify([{"scroll_y":3000},{"wait":1000},{"scroll_y":6000},{"wait":1000},{"scroll_y":9000},{"wait":500}]);
+    const jsInstructions = JSON.stringify([{"scroll_y":2000},{"wait":800},{"scroll_y":4000},{"wait":800},{"scroll_y":6000},{"wait":800},{"scroll_y":8000},{"wait":800},{"scroll_y":10000},{"wait":800},{"scroll_y":0},{"wait":500}]);
     const zenUrl = `https://api.zenrows.com/v1/?apikey=${ZENROWS_KEY}&url=${encodeURIComponent(url)}&js_render=true&wait=3000&js_instructions=${encodeURIComponent(jsInstructions)}`;
     const r = await fetch(zenUrl, { signal: AbortSignal.timeout(55000) });
     if (!r.ok) throw new Error(`Zenrows HTTP ${r.status}`);
@@ -284,17 +284,21 @@ function parseVehicle(html, url, platform) {
       } catch(_) {}
     }
     $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s && !s.includes('logo')) imgSet.add(s); });
-    console.log('ALL_URLS:', [...imgSet].join(' || '));
-    // Deduplicate by UUID — strip size suffix first, then deduplicate
+    // Clean, deduplicate by UUID, filter non-vehicle images
     const seen = new Set();
     const deduped = [];
-    for (const u of imgSet) {
-      if (u.includes('logo') || u.includes('dealer-info') || u.includes('Best-Manage') || u.includes('best-manage')) continue;
-      // Strip size suffix like .jpg-2048x1536 or -800x600
-      const clean = u.replace(/\.jpg-\d+x\d+$/, '.jpg').replace(/-\d+x\d+(\.(jpg|jpeg|png|webp))$/, '$1');
-      const uuidMatch = clean.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
-      const key = uuidMatch ? uuidMatch[1] : clean;
-      if (!seen.has(key)) { seen.add(key); deduped.push(clean); }
+    for (let u of imgSet) {
+      // Strip CSS garbage like &quot;); from end
+      u = u.replace(/&quot;.*$/, '').replace(/['")\s;]+$/, '').trim();
+      // Filter out logos, badges, convertus branding images
+      if (u.includes('tadvantagebetaprod') || u.includes('cdn-convertus') || u.includes('logo') || u.includes('dealer-info')) continue;
+      // Strip invalid size suffix (.jpg-2048x1536 → .jpg)
+      u = u.replace(/\.jpg-\d+x\d+$/, '.jpg').replace(/\.png-\d+x\d+$/, '.png');
+      if (!u.startsWith('http')) continue;
+      // Deduplicate by UUID
+      const uuidMatch = u.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+      const key = uuidMatch ? uuidMatch[1] : u;
+      if (!seen.has(key)) { seen.add(key); deduped.push(u); }
     }
     result.images = deduped.slice(0, 25);
     result.features = extractFeatures(text);
