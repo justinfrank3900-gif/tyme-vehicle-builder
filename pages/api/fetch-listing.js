@@ -121,9 +121,33 @@ function parseVehicle(html, url, platform) {
     if (!result.todayPrice) { const m = text.match(/\$\s*([\d,]+)/); if (m) result.todayPrice = '$' + m[1]; }
     if (!result.color) { const m = text.match(/Exterior Colou?r[:\s]+([A-Za-z\s]+?)(?:\n|Interior)/i); if (m) result.color = m[1].trim(); }
     const imgSet = new Set();
-    const ms = html.matchAll(/https:\/\/[a-z0-9-]+\.autotradercdn\.ca\/photos\/[^"'\s\\<>]+/gi);
-    for (const m of ms) imgSet.add(m[0].replace(/-\d+x\d+(\.[a-z]+)$/, '-2048x1536$1'));
-    $('img').each((_, el) => { const s = $(el).attr('src') || $(el).attr('data-src') || ''; if (s.includes('autotradercdn')) imgSet.add(s); });
+    // Pattern 1: extract from ngVdpModel JSON (most reliable — all photos in one object)
+    if (ngData) {
+      const gallery = ngData.gallery || ngData.media || ngData.photos || ngData.images || [];
+      const items = Array.isArray(gallery) ? gallery : (gallery.items || gallery.photos || []);
+      for (const item of items) {
+        const u = typeof item === 'string' ? item : (item.url || item.src || item.highResUrl || item.largeUrl || '');
+        if (u && u.startsWith('http') && !u.includes('logo')) imgSet.add(u);
+      }
+      // Also check heroPhotos, vehiclePhotos, carouselPhotos
+      for (const key of ['heroPhotos','vehiclePhotos','carouselPhotos','photoGallery']) {
+        const arr = ngData[key];
+        if (Array.isArray(arr)) {
+          for (const item of arr) {
+            const u = typeof item === 'string' ? item : (item.url || item.src || item.highResUrl || '');
+            if (u && u.startsWith('http') && !u.includes('logo')) imgSet.add(u);
+          }
+        }
+      }
+    }
+    // Pattern 2: autotradercdn URLs anywhere in HTML (regex)
+    for (const m of html.matchAll(/https:\/\/[a-z0-9-]+\.autotradercdn\.ca\/photos\/[^"'\s\\<>]+/gi))
+      imgSet.add(m[0].replace(/-\d+x\d+(\.[a-z]+)$/, '-2048x1536$1'));
+    // Pattern 3: img tags
+    $('img').each((_, el) => { const s = $(el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy') || ''; if (s.includes('autotradercdn')) imgSet.add(s); });
+    // Pattern 4: any JSON array of photo objects in the page
+    for (const m of html.matchAll(/"(?:url|src|highResUrl|largeUrl)"\s*:\s*"(https:\/\/[a-z0-9-]+\.autotradercdn\.ca\/[^"]+)"/gi))
+      imgSet.add(m[1].replace(/-\d+x\d+(\.[a-z]+)$/, '-2048x1536$1'));
     result.images = [...imgSet].filter(u => !u.includes('logo')).slice(0, 25);
     const bwm = text.match(/\$\s*([\d.]+)\s*\/?\s*bi-?weekly/i);
     if (bwm) result.biweeklyPayment = '$' + Math.round(parseFloat(bwm[1])) + ' biweekly';
