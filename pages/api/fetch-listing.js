@@ -66,7 +66,14 @@ async function fetchPage(url, platform) {
 
   // Convertus/Kaizen: Zenrows Scraping Browser (real Chrome, full JS render)
   if (platform === 'convertus') {
-    const jsInstructions = JSON.stringify([{"scroll_y":2000},{"wait":800},{"scroll_y":4000},{"wait":800},{"scroll_y":6000},{"wait":800},{"scroll_y":8000},{"wait":800},{"scroll_y":10000},{"wait":800},{"scroll_y":0},{"wait":500}]);
+    const jsInstructions = JSON.stringify([
+      {"evaluate": "window.scrollTo(0, document.body.scrollHeight)"},
+      {"wait": 2000},
+      {"evaluate": "window.scrollTo(0, document.body.scrollHeight)"},
+      {"wait": 2000},
+      {"evaluate": "window.scrollTo(0, 0)"},
+      {"wait": 500}
+    ]);
     const zenUrl = `https://api.zenrows.com/v1/?apikey=${ZENROWS_KEY}&url=${encodeURIComponent(url)}&js_render=true&wait=3000&js_instructions=${encodeURIComponent(jsInstructions)}`;
     const r = await fetch(zenUrl, { signal: AbortSignal.timeout(55000) });
     if (!r.ok) throw new Error(`Zenrows HTTP ${r.status}`);
