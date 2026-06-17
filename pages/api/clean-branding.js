@@ -10,14 +10,13 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { imageUrl } = req.body;
+    const { imageUrl, maskDataUrl } = req.body;
     if (!imageUrl) return res.status(400).json({ error: 'imageUrl required' });
 
-    // Fetch the image server-side
+    // Fetch the source image
     let imageBuffer;
     if (imageUrl.startsWith('data:')) {
-      const base64 = imageUrl.split(',')[1];
-      imageBuffer = Buffer.from(base64, 'base64');
+      imageBuffer = Buffer.from(imageUrl.split(',')[1], 'base64');
     } else {
       const imgResp = await fetch(imageUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://tyme-vehicle-builder.vercel.app/' },
@@ -27,25 +26,35 @@ export default async function handler(req, res) {
       imageBuffer = Buffer.from(await imgResp.arrayBuffer());
     }
 
-    // Call Clipdrop remove-text (auto-detects and removes all text, logos, watermarks)
-    const fd = new FormData();
-    fd.append('image_file', new Blob([imageBuffer], { type: 'image/jpeg' }), 'image.jpg');
-
-    const resp = await fetch('https://clipdrop-api.co/remove-text/v1', {
-      method: 'POST',
-      headers: { 'x-api-key': CLIPDROP_KEY },
-      body: fd,
-      signal: AbortSignal.timeout(60000)
-    });
-
-    if (!resp.ok) {
-      const err = await resp.text();
-      throw new Error(`Clipdrop error ${resp.status}: ${err.slice(0, 200)}`);
+    if (maskDataUrl) {
+      // Cleanup mode: erase painted areas using mask
+      const maskBuffer = Buffer.from(maskDataUrl.split(',')[1], 'base64');
+      const fd = new FormData();
+      fd.append('image_file', new Blob([imageBuffer], { type: 'image/jpeg' }), 'image.jpg');
+      fd.append('mask_file', new Blob([maskBuffer], { type: 'image/png' }), 'mask.png');
+      const resp = await fetch('https://clipdrop-api.co/cleanup/v1', {
+        method: 'POST',
+        headers: { 'x-api-key': CLIPDROP_KEY },
+        body: fd,
+        signal: AbortSignal.timeout(60000)
+      });
+      if (!resp.ok) throw new Error(`Clipdrop cleanup error ${resp.status}: ${(await resp.text()).slice(0,200)}`);
+      const result = Buffer.from(await resp.arrayBuffer());
+      return res.status(200).json({ success: true, dataUrl: `data:image/jpeg;base64,${result.toString('base64')}` });
+    } else {
+      // Text removal mode: auto-remove all text/watermarks
+      const fd = new FormData();
+      fd.append('image_file', new Blob([imageBuffer], { type: 'image/jpeg' }), 'image.jpg');
+      const resp = await fetch('https://clipdrop-api.co/remove-text/v1', {
+        method: 'POST',
+        headers: { 'x-api-key': CLIPDROP_KEY },
+        body: fd,
+        signal: AbortSignal.timeout(60000)
+      });
+      if (!resp.ok) throw new Error(`Clipdrop remove-text error ${resp.status}: ${(await resp.text()).slice(0,200)}`);
+      const result = Buffer.from(await resp.arrayBuffer());
+      return res.status(200).json({ success: true, dataUrl: `data:image/png;base64,${result.toString('base64')}` });
     }
-
-    const resultBuffer = Buffer.from(await resp.arrayBuffer());
-    const base64Result = resultBuffer.toString('base64');
-    res.status(200).json({ success: true, dataUrl: `data:image/png;base64,${base64Result}` });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
