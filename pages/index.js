@@ -395,6 +395,8 @@ export default function Home() {
       setStatus({msg:'✓ Areas erased', type:'ok'});
     } catch(e) { setStatus({msg:'Erase failed: '+e.message, type:'err'}); }
   }
+
+  const features=parseBullets(featText);
   const pairs=[];
   for(let i=0;i<selImgs.length;i+=2)
     pairs.push(selImgs[i+1]?[selImgs[i],selImgs[i+1]]:[selImgs[i]]);
