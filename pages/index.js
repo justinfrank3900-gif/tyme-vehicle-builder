@@ -156,6 +156,7 @@ export default function Home() {
   const [preview, setPreview] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [erasing, setErasing] = useState(null);
+  const [cleaning, setCleaning] = useState(false);
   const prevRef = useRef(null);
 
   function sf(key,val){setFields(f=>({...f,[key]:val}));}
@@ -223,7 +224,6 @@ export default function Home() {
   async function eraseBackground(src,selIdx){
     setErasing(selIdx);
     try {
-      // Use server-side route — remove.bg blocks direct browser calls (CORS)
       const r=await fetch('/api/remove-bg',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -237,6 +237,33 @@ export default function Home() {
       setStatus({msg:'✓ Background removed',type:'ok'});
     } catch(e){setStatus({msg:'AI removal failed: '+e.message,type:'err'});}
     setErasing(null);
+  }
+
+  async function cleanBranding(){
+    if(!selImgs.length) return setStatus({msg:'Select photos first.',type:'err'});
+    setCleaning(true);
+    setStatus({msg:`Cleaning branding from ${selImgs.length} photo${selImgs.length>1?'s':''}...`,type:'info'});
+    let done=0;
+    const cleaned=[...selImgs];
+    for(let i=0;i<selImgs.length;i++){
+      const src=selImgs[i];
+      try {
+        const r=await fetch('/api/clean-branding',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({imageUrl: src.startsWith('data:') ? src : proxyImg(src)})
+        });
+        const json=await r.json();
+        if(json.success){
+          cleaned[i]=json.dataUrl;
+          done++;
+          setStatus({msg:`Cleaning... ${done}/${selImgs.length} done`,type:'info'});
+        }
+      } catch(e){ /* skip failed, keep original */ }
+    }
+    setSelImgs(cleaned);
+    setStatus({msg:`✓ Cleaned ${done} of ${selImgs.length} photos`,type:'ok'});
+    setCleaning(false);
   }
 
   const features=parseBullets(featText);
@@ -452,9 +479,10 @@ export default function Home() {
           </div>
 
           {imgTab==='auto'&&<>
-            <div style={{display:'flex',gap:6,marginBottom:6}}>
+            <div style={{display:'flex',gap:6,marginBottom:6,flexWrap:'wrap'}}>
               <Btn style={{fontSize:10,padding:'5px 10px',background:'#92400e'}} onClick={()=>setSelImgs([...allImgs])}>Select All</Btn>
               <Btn style={{fontSize:10,padding:'5px 10px',background:'#374151'}} onClick={()=>setSelImgs([])}>Clear</Btn>
+              {selImgs.length>0&&<Btn style={{fontSize:10,padding:'5px 10px',background:'#6d28d9',opacity:cleaning?0.6:1}} onClick={cleanBranding} disabled={cleaning}>{cleaning?'🧹 Cleaning...':'🧹 Clean Branding'}</Btn>}
             </div>
             {allImgs.length===0
               ?<div style={{color:'#64748b',fontSize:11,marginBottom:6}}>Pull a listing to load photos</div>
