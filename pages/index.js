@@ -251,7 +251,7 @@ export default function Home() {
         const r=await fetch('/api/clean-branding',{
           method:'POST',
           headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({imageUrl: src.startsWith('data:') ? src : proxyImg(src)})
+          body:JSON.stringify({imageUrl: src.startsWith('data:') ? src : src})
         });
         const json=await r.json();
         if(json.success){
