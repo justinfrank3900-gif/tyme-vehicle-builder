@@ -254,29 +254,27 @@ export default function Home() {
       const pdf=new jsPDF({unit:'px',format:[W,844],hotfixes:['px_scaling']});
       let first=true;
       for(const slide of slides){
-        // Pre-render all images with object-fit:cover using canvas
+        // Pre-render all images with object-fit:contain using canvas
         // html2canvas doesn't support object-fit, so we draw manually
         const imgEls=slide.querySelectorAll('img[data-cover]');
         const coverMap=new Map();
         await Promise.all([...imgEls].map(async imgEl=>{
-          const src=imgEl.src;
           const w=imgEl.offsetWidth||390;
           const h=imgEl.offsetHeight||345;
           await new Promise(res=>{if(imgEl.complete)res();else{imgEl.onload=res;imgEl.onerror=res;}});
+          const iw=imgEl.naturalWidth,ih=imgEl.naturalHeight;
+          if(!iw||!ih) return;
+          // Contain: scale to fit, center with black bars
+          const scale=Math.min((w*2)/iw,(h*2)/ih);
+          const sw=iw*scale,sh=ih*scale;
+          const ox=((w*2)-sw)/2,oy=((h*2)-sh)/2;
           const can=document.createElement('canvas');
           can.width=w*2;can.height=h*2;
           const ctx=can.getContext('2d');
-          ctx.drawImage(imgEl,0,0,imgEl.naturalWidth,imgEl.naturalHeight);
-          // Cover crop: scale to fill then center
-          const iw=imgEl.naturalWidth,ih=imgEl.naturalHeight;
-          const scale=Math.max((w*2)/iw,(h*2)/ih);
-          const sw=iw*scale,sh=ih*scale;
-          const sx=(sw-(w*2))/2,sy=(sh-(h*2))/2;
-          const can2=document.createElement('canvas');
-          can2.width=w*2;can2.height=h*2;
-          const ctx2=can2.getContext('2d');
-          ctx2.drawImage(imgEl,-sx,-sy,sw,sh);
-          coverMap.set(imgEl,can2.toDataURL('image/jpeg',0.95));
+          ctx.fillStyle='#000';
+          ctx.fillRect(0,0,w*2,h*2);
+          ctx.drawImage(imgEl,ox,oy,sw,sh);
+          coverMap.set(imgEl,can.toDataURL('image/jpeg',0.95));
         }));
         // Swap img src with pre-rendered canvas data for export
         for(const [imgEl,dataUrl] of coverMap){
