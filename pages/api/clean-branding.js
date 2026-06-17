@@ -27,11 +27,11 @@ export default async function handler(req, res) {
       imageBuffer = Buffer.from(await imgResp.arrayBuffer());
     }
 
-    // Call Clipdrop cleanup (removes text, logos, signs automatically)
+    // Call Clipdrop remove-text (auto-detects and removes all text, logos, watermarks)
     const fd = new FormData();
     fd.append('image_file', new Blob([imageBuffer], { type: 'image/jpeg' }), 'image.jpg');
 
-    const resp = await fetch('https://clipdrop-api.co/cleanup/v1', {
+    const resp = await fetch('https://clipdrop-api.co/remove-text/v1', {
       method: 'POST',
       headers: { 'x-api-key': CLIPDROP_KEY },
       body: fd,
