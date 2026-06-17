@@ -601,7 +601,8 @@ export default function Home() {
       {brushModal&&<BrushModal src={proxyImg(brushModal.src)} onDone={(src,mask)=>applyBrushErase(brushModal.src,mask)} onCancel={()=>setBrushModal(null)}/>}
 
       <div style={{display:'flex',height:'100vh',background:'#0d0d12',color:'#e2e8f0',fontSize:13}}>
-        <div style={{width:355,minWidth:355,background:'#13131a',borderRight:'1px solid #1e1e2c',overflowY:'auto',padding:16}}>
+        <div style={{width:355,minWidth:355,background:'#13131a',borderRight:'1px solid #1e1e2c',display:'flex',flexDirection:'column'}}>
+        <div style={{flex:1,overflowY:'auto',padding:16}}>
 
           <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'1px solid #1e1e2c'}}>
             <img src={LOGO} style={{width:38,height:38,objectFit:'contain',borderRadius:6}}/>
@@ -701,9 +702,12 @@ export default function Home() {
           </>}
 
           <HR/>
+          </div>
+          <div style={{padding:'12px 16px',borderTop:'1px solid #1e1e2c',background:'#13131a'}}>
           <Btn style={{width:'100%',justifyContent:'center',padding:11,fontSize:13}} onClick={()=>setPreview(true)}>⚡ Build Preview</Btn>
           <Btn style={{width:'100%',justifyContent:'center',padding:11,fontSize:13,background:'#16a34a',marginTop:6}} onClick={doExport}>{exporting?'⏳ Generating...':'↓ Export PDF'}</Btn>
           <Btn style={{width:'100%',justifyContent:'center',padding:11,fontSize:13,background:'#1877f2',marginTop:6}} onClick={postToFacebook}>📘 Post to Facebook</Btn>
+          </div>
         </div>
 
         <div style={{flex:1,overflowY:'auto',background:'#111',display:'flex',flexDirection:'column',alignItems:'center',padding:'20px 16px'}} ref={prevRef}>
