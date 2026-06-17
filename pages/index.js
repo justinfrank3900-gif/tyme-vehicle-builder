@@ -236,9 +236,43 @@ export default function Home() {
       const pdf=new jsPDF({unit:'px',format:[W,844],hotfixes:['px_scaling']});
       let first=true;
       for(const slide of slides){
-        const imgs=slide.querySelectorAll('img');
-        await Promise.all([...imgs].map(img=>img.complete?Promise.resolve():new Promise(r=>{img.onload=r;img.onerror=r;})));
-        const c=await window.html2canvas(slide,{scale:2,useCORS:true,allowTaint:false,backgroundColor:'#000000',logging:false,imageTimeout:20000,width:390,windowWidth:390});
+        // Pre-render all images with object-fit:cover using canvas
+        // html2canvas doesn't support object-fit, so we draw manually
+        const imgEls=slide.querySelectorAll('img[data-cover]');
+        const coverMap=new Map();
+        await Promise.all([...imgEls].map(async imgEl=>{
+          const src=imgEl.src;
+          const w=imgEl.offsetWidth||390;
+          const h=imgEl.offsetHeight||345;
+          await new Promise(res=>{if(imgEl.complete)res();else{imgEl.onload=res;imgEl.onerror=res;}});
+          const can=document.createElement('canvas');
+          can.width=w*2;can.height=h*2;
+          const ctx=can.getContext('2d');
+          ctx.drawImage(imgEl,0,0,imgEl.naturalWidth,imgEl.naturalHeight);
+          // Cover crop: scale to fill then center
+          const iw=imgEl.naturalWidth,ih=imgEl.naturalHeight;
+          const scale=Math.max((w*2)/iw,(h*2)/ih);
+          const sw=iw*scale,sh=ih*scale;
+          const sx=(sw-(w*2))/2,sy=(sh-(h*2))/2;
+          const can2=document.createElement('canvas');
+          can2.width=w*2;can2.height=h*2;
+          const ctx2=can2.getContext('2d');
+          ctx2.drawImage(imgEl,-sx,-sy,sw,sh);
+          coverMap.set(imgEl,can2.toDataURL('image/jpeg',0.95));
+        }));
+        // Swap img src with pre-rendered canvas data for export
+        for(const [imgEl,dataUrl] of coverMap){
+          imgEl.dataset.origSrc=imgEl.src;
+          imgEl.src=dataUrl;
+          imgEl.style.objectFit='fill';
+        }
+        await Promise.all([...slide.querySelectorAll('img')].map(img=>img.complete?Promise.resolve():new Promise(r=>{img.onload=r;img.onerror=r;})));
+        const c=await window.html2canvas(slide,{scale:2,useCORS:true,allowTaint:true,backgroundColor:'#000000',logging:false,imageTimeout:20000,width:390,windowWidth:390});
+        // Restore original srcs
+        for(const [imgEl] of coverMap){
+          imgEl.src=imgEl.dataset.origSrc;
+          imgEl.style.objectFit='';
+        }
         const imgData=c.toDataURL('image/jpeg',0.93);
         const ph=Math.round((c.height/c.width)*W);
         if(!first) pdf.addPage([W,ph]);
@@ -260,11 +294,11 @@ export default function Home() {
   const pairSlide=(a,b)=>{
     const pA=a.startsWith('data:')?a:proxyImg(a);
     const pB=b.startsWith('data:')?b:proxyImg(b);
-    return `<div style="width:390px;height:${SH}px;overflow:hidden;background:#000;display:block"><div style="width:390px;height:${PH}px;overflow:hidden;display:block"><img src="${pA}" style="width:390px;height:${PH}px;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/></div><div style="width:390px;height:3px;background:#000;display:block"></div><div style="width:390px;height:${PH}px;overflow:hidden;display:block"><img src="${pB}" style="width:390px;height:${PH}px;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/></div></div>`;
+    return `<div style="width:390px;height:${SH}px;overflow:hidden;background:#000;display:block"><div style="width:390px;height:${PH}px;overflow:hidden;display:block"><img src="${pA}" data-cover="1" style="width:390px;height:${PH}px;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/></div><div style="width:390px;height:3px;background:#000;display:block"></div><div style="width:390px;height:${PH}px;overflow:hidden;display:block"><img src="${pB}" data-cover="1" style="width:390px;height:${PH}px;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/></div></div>`;
   };
   const singleSlide=a=>{
     const pA=a.startsWith('data:')?a:proxyImg(a);
-    return `<div style="width:390px;height:${SH}px;overflow:hidden;background:#000;display:block"><img src="${pA}" style="width:390px;height:${SH}px;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/></div>`;
+    return `<div style="width:390px;height:${SH}px;overflow:hidden;background:#000;display:block"><img src="${pA}" data-cover="1" style="width:390px;height:${SH}px;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/></div>`;
   };
 
   const slides_html=!preview?null:[
@@ -275,12 +309,12 @@ export default function Home() {
         <div style="font-size:30px;font-weight:900;color:white;line-height:1.3;margin-top:10px">Auto Finance Company<br/>in the Country</div>
       </div>
     </div>`,
-    `<div style="background:linear-gradient(180deg,#050510,#0a0a18);padding-bottom:20px">
+    `<div style="background:linear-gradient(180deg,#050510,#0a0a18);padding-bottom:20px;min-height:${SH}px">
       ${HDR('Unit Description')}
-      <div style="padding:0 16px 6px;font-size:26px;font-weight:900;color:white;line-height:1.2">${fields.title}</div>
-      <div style="padding:0 16px 16px;font-size:22px;font-weight:800;color:white">${fields.color}${fields.color&&fields.kms?' – ':''}${fields.kms}</div>
-      <div style="padding:0 14px;display:flex;flex-direction:column;gap:10px">
-        ${features.map(f=>`<div style="display:flex;gap:12px;align-items:flex-start;font-size:16px;line-height:1.5;color:white"><div style="width:8px;height:8px;min-width:8px;background:#2196f3;border-radius:50%;margin-top:6px;box-shadow:0 0 6px rgba(33,150,243,0.8)"></div><div>${f}</div></div>`).join('')}
+      <div style="padding:0 16px 6px;font-size:24px;font-weight:900;color:white;line-height:1.3;word-wrap:break-word">${fields.title}</div>
+      <div style="padding:0 16px 16px;font-size:20px;font-weight:800;color:white">${fields.color}${fields.color&&fields.kms?' – ':''}${fields.kms}</div>
+      <div style="padding:0 14px;display:flex;flex-direction:column;gap:8px">
+        ${features.map(f=>`<div style="display:flex;gap:12px;align-items:flex-start;font-size:15px;line-height:1.4;color:white;word-wrap:break-word"><div style="width:8px;height:8px;min-width:8px;background:#2196f3;border-radius:50%;margin-top:5px;box-shadow:0 0 6px rgba(33,150,243,0.8)"></div><div>${f}</div></div>`).join('')}
       </div>
     </div>`,
     `<div style="background:linear-gradient(180deg,#050510,#0a0a18);padding-bottom:20px">
