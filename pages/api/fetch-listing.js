@@ -37,7 +37,7 @@ export default async function handler(req, res) {
 async function fetchPage(url, platform) {
   // AutoTrader: use Zenrows with JS rendering + premium proxies
   if (platform === 'autotrader') {
-    const zenUrl = `https://api.zenrows.com/v1/?apikey=${ZENROWS_KEY}&url=${encodeURIComponent(url)}&js_render=true&wait=5000`;
+    const zenUrl = `https://api.zenrows.com/v1/?apikey=${ZENROWS_KEY}&url=${encodeURIComponent(url)}&js_render=true&premium_proxy=true&wait=3000`;
     const r = await fetch(zenUrl, { signal: AbortSignal.timeout(90000) });
     if (!r.ok) throw new Error(`Zenrows HTTP ${r.status}`);
     const html = await r.text();
