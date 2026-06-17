@@ -138,6 +138,114 @@ function CropModal({ src, onDone, onCancel }) {
   );
 }
 
+function BrushModal({ src, onDone, onCancel }) {
+  const canvasRef = useRef(null);
+  const maskRef = useRef(null);
+  const imgRef = useRef(null);
+  const painting = useRef(false);
+  const [brushSize, setBrushSize] = useState(20);
+  const [ready, setReady] = useState(false);
+
+  useState(() => {
+    fetch(src).then(r=>r.blob()).then(blob=>{
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        imgRef.current = img;
+        const canvas = canvasRef.current;
+        const mask = maskRef.current;
+        if (!canvas || !mask) return;
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        mask.width = img.naturalWidth;
+        mask.height = img.naturalHeight;
+        // Draw image on canvas
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        // Init mask as black (keep everything)
+        const mctx = mask.getContext('2d');
+        mctx.fillStyle = '#000';
+        mctx.fillRect(0, 0, mask.width, mask.height);
+        setReady(true);
+      };
+      img.src = url;
+    });
+  }, []);
+
+  function getPos(e, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const t = e.touches ? e.touches[0] : e;
+    return {
+      x: (t.clientX - rect.left) * scaleX,
+      y: (t.clientY - rect.top) * scaleY
+    };
+  }
+
+  function paint(e) {
+    if (!painting.current) return;
+    const canvas = canvasRef.current;
+    const mask = maskRef.current;
+    const img = imgRef.current;
+    if (!canvas || !mask || !img) return;
+    const pos = getPos(e, canvas);
+    const bs = brushSize * (canvas.width / canvas.getBoundingClientRect().width);
+    // Draw red overlay on display canvas
+    const ctx = canvas.getContext('2d');
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(255,50,50,0.5)';
+    ctx.beginPath(); ctx.arc(pos.x, pos.y, bs, 0, Math.PI*2); ctx.fill();
+    // Draw white on mask (white = erase)
+    const mctx = mask.getContext('2d');
+    mctx.fillStyle = '#fff';
+    mctx.beginPath(); mctx.arc(pos.x, pos.y, bs, 0, Math.PI*2); mctx.fill();
+  }
+
+  function startPaint(e) { e.preventDefault(); painting.current = true; paint(e); }
+  function stopPaint() { painting.current = false; }
+
+  function clearMask() {
+    const canvas = canvasRef.current;
+    const mask = maskRef.current;
+    const img = imgRef.current;
+    if (!canvas || !mask || !img) return;
+    canvas.getContext('2d').drawImage(img, 0, 0);
+    const mctx = mask.getContext('2d');
+    mctx.fillStyle = '#000';
+    mctx.fillRect(0, 0, mask.width, mask.height);
+  }
+
+  async function applyErase() {
+    const mask = maskRef.current;
+    if (!mask) return;
+    const maskDataUrl = mask.toDataURL('image/png');
+    onDone(src, maskDataUrl);
+  }
+
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.92)',zIndex:1001,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:16}}>
+      <div style={{color:'white',fontWeight:700,fontSize:14,marginBottom:8}}>
+        {ready ? '🖌️ Paint over logos/badges to erase — then hit Apply' : 'Loading image...'}
+      </div>
+      <div style={{display:'flex',gap:12,alignItems:'center',marginBottom:8}}>
+        <span style={{color:'#aaa',fontSize:11}}>Brush size:</span>
+        <input type="range" min="5" max="60" value={brushSize} onChange={e=>setBrushSize(+e.target.value)} style={{width:100}}/>
+        <span style={{color:'white',fontSize:11}}>{brushSize}px</span>
+        <button onClick={clearMask} style={{background:'#374151',color:'white',border:'none',borderRadius:5,padding:'4px 12px',fontSize:11,cursor:'pointer'}}>Clear</button>
+      </div>
+      <canvas ref={canvasRef}
+        style={{maxWidth:'85vw',maxHeight:'55vh',cursor:'crosshair',borderRadius:6,border:'2px solid #ef4444'}}
+        onMouseDown={startPaint} onMouseMove={paint} onMouseUp={stopPaint} onMouseLeave={stopPaint}
+        onTouchStart={startPaint} onTouchMove={e=>{e.preventDefault();paint(e);}} onTouchEnd={stopPaint}/>
+      <canvas ref={maskRef} style={{display:'none'}}/>
+      <div style={{display:'flex',gap:12,marginTop:12}}>
+        <button onClick={applyErase} style={{background:'#dc2626',color:'white',border:'none',borderRadius:7,padding:'10px 24px',fontWeight:700,cursor:'pointer',fontSize:13}}>🧹 Erase Painted Areas</button>
+        <button onClick={onCancel} style={{background:'#374151',color:'white',border:'none',borderRadius:7,padding:'10px 24px',fontWeight:700,cursor:'pointer',fontSize:13}}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [url, setUrl] = useState('');
   const [status, setStatus] = useState(null);
@@ -157,6 +265,7 @@ export default function Home() {
   const [exporting, setExporting] = useState(false);
   const [erasing, setErasing] = useState(null);
   const [cleaning, setCleaning] = useState(false);
+  const [brushModal, setBrushModal] = useState(null); // {src, selIdx}
   const prevRef = useRef(null);
 
   function sf(key,val){setFields(f=>({...f,[key]:val}));}
@@ -266,7 +375,25 @@ export default function Home() {
     setCleaning(false);
   }
 
-  const features=parseBullets(featText);
+  async function applyBrushErase(src, maskDataUrl) {
+    setBrushModal(null);
+    setStatus({msg:'Erasing painted areas...', type:'info'});
+    try {
+      const r = await fetch('/api/clean-branding', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ imageUrl: src, maskDataUrl })
+      });
+      const json = await r.json();
+      if (!json.success) throw new Error(json.error || 'Erase failed');
+      const selIdx = brushModal ? brushModal.selIdx : -1;
+      if (selIdx >= 0) {
+        setSelImgs(prev => prev.map((s,i) => i===selIdx ? json.dataUrl : s));
+        setAllImgs(prev => prev.map(s => s===src ? json.dataUrl : s));
+      }
+      setStatus({msg:'✓ Areas erased', type:'ok'});
+    } catch(e) { setStatus({msg:'Erase failed: '+e.message, type:'err'}); }
+  }
   const pairs=[];
   for(let i=0;i<selImgs.length;i+=2)
     pairs.push(selImgs[i+1]?[selImgs[i],selImgs[i+1]]:[selImgs[i]]);
@@ -415,6 +542,7 @@ export default function Home() {
       </Head>
 
       {cropImg&&<CropModal src={cropImg.src} onDone={applyCrop} onCancel={()=>setCropImg(null)}/>}
+      {brushModal&&<BrushModal src={proxyImg(brushModal.src)} onDone={(src,mask)=>applyBrushErase(brushModal.src,mask)} onCancel={()=>setBrushModal(null)}/>}
 
       <div style={{display:'flex',height:'100vh',background:'#0d0d12',color:'#e2e8f0',fontSize:13}}>
         <div style={{width:355,minWidth:355,background:'#13131a',borderRight:'1px solid #1e1e2c',overflowY:'auto',padding:16}}>
@@ -499,7 +627,7 @@ export default function Home() {
                         <div style={{position:'absolute',top:2,right:2,width:15,height:15,background:'#2196f3',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,color:'white',fontWeight:700}}>✓</div>
                         <div style={{display:'flex',gap:2,padding:'2px 3px',background:'rgba(0,0,0,0.7)'}}>
                           <button onClick={()=>openCrop(src,selIdx)} style={{flex:1,background:'#1e40af',border:'none',borderRadius:3,color:'white',fontSize:9,cursor:'pointer',padding:'2px 0'}}>✂ Crop</button>
-                          <button onClick={()=>eraseBackground(src,selIdx)} disabled={erasing===selIdx} style={{flex:1,background:'#7c3aed',border:'none',borderRadius:3,color:'white',fontSize:9,cursor:'pointer',padding:'2px 0'}}>{erasing===selIdx?'..':'🪄 AI'}</button>
+                          <button onClick={()=>setBrushModal({src,selIdx})} style={{flex:1,background:'#7c3aed',border:'none',borderRadius:3,color:'white',fontSize:9,cursor:'pointer',padding:'2px 0'}}>🪄 AI</button>
                         </div>
                       </>}
                     </div>
