@@ -12,11 +12,10 @@ function parseBullets(text) {
 
 function CropModal({ src, onDone, onCancel }) {
   const canvasRef = useRef(null);
-  const [drag, setDrag] = useState(null);
   const dragRef = useRef(null);
-  const [crop, setCrop] = useState({ x: 0.1, y: 0.1, w: 0.8, h: 0.8 });
-  const cropRef = useRef({ x: 0.1, y: 0.1, w: 0.8, h: 0.8 });
+  const cropRef = useRef({ x: 0, y: 0, w: 1, h: 1 });
   const imgRef = useRef(null);
+  const [ready, setReady] = useState(false);
 
   function getXY(e, canvas) {
     const rect = canvas.getBoundingClientRect();
@@ -43,7 +42,7 @@ function CropModal({ src, onDone, onCancel }) {
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(0,0,W,H);
     const cx=c.x*W,cy=c.y*H,cw=c.w*W,ch=c.h*H;
-    ctx.drawImage(img,cx,cy,cw,ch,cx,cy,cw,ch);
+    ctx.drawImage(img,cx/W*img.naturalWidth,cy/H*img.naturalHeight,cw/W*img.naturalWidth,ch/H*img.naturalHeight,cx,cy,cw,ch);
     ctx.strokeStyle='#2196f3'; ctx.lineWidth=2;
     ctx.strokeRect(cx,cy,cw,ch);
     ctx.fillStyle='#2196f3';
@@ -52,6 +51,28 @@ function CropModal({ src, onDone, onCancel }) {
     }
   }
 
+  // Load image as blob to avoid canvas taint (CORS issue)
+  useState(() => {
+    fetch(src).then(r=>r.blob()).then(blob=>{
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        imgRef.current = img;
+        const c = {x:0,y:0,w:1,h:1};
+        cropRef.current = c;
+        setReady(true);
+        setTimeout(()=>drawCanvas(c),50);
+      };
+      img.src = url;
+    }).catch(()=>{
+      // Fallback: try direct with crossOrigin
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => { imgRef.current = img; const c={x:0,y:0,w:1,h:1}; cropRef.current=c; setReady(true); setTimeout(()=>drawCanvas(c),50); };
+      img.src = src;
+    });
+  }, []);
+
   function onMouseDown(e) {
     const canvas = canvasRef.current; if (!canvas) return;
     const p = getXY(e, canvas);
@@ -59,13 +80,11 @@ function CropModal({ src, onDone, onCancel }) {
     for (const [hk,hv] of Object.entries(getHandles(c))) {
       if (Math.abs(p.x-hv.x)<0.05 && Math.abs(p.y-hv.y)<0.05) {
         dragRef.current = {type:'handle',handle:hk,start:p,origCrop:{...c}};
-        setDrag(dragRef.current);
         return;
       }
     }
     if (p.x>c.x && p.x<c.x+c.w && p.y>c.y && p.y<c.y+c.h) {
       dragRef.current = {type:'move',start:p,origCrop:{...c}};
-      setDrag(dragRef.current);
     }
   }
 
@@ -87,13 +106,13 @@ function CropModal({ src, onDone, onCancel }) {
       if(h.includes('n')){nc.y=Math.max(0,Math.min(nc.y+nc.h-0.1,nc.y+dy));nc.h=drag.origCrop.h-(nc.y-drag.origCrop.y);}
     }
     cropRef.current = nc;
-    setCrop(nc); drawCanvas(nc);
+    drawCanvas(nc);
   }
 
-  function onMouseUp() { dragRef.current = null; setDrag(null); }
+  function onMouseUp() { dragRef.current = null; }
 
   function applyCrop() {
-    const canvas=canvasRef.current, img=imgRef.current; if(!canvas||!img) return;
+    const img = imgRef.current; if(!img) return;
     const c = cropRef.current;
     const out=document.createElement('canvas');
     out.width=Math.round(c.w*img.naturalWidth);
@@ -104,14 +123,13 @@ function CropModal({ src, onDone, onCancel }) {
 
   return (
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',zIndex:1000,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:20}}>
-      <div style={{color:'white',fontWeight:700,fontSize:14,marginBottom:12}}>Crop Photo — drag handles to adjust</div>
+      <div style={{color:'white',fontWeight:700,fontSize:14,marginBottom:12}}>{ready ? 'Crop Photo — drag handles to adjust' : 'Loading image...'}</div>
       <canvas ref={canvasRef} width={600} height={450}
         style={{maxWidth:'90vw',maxHeight:'60vh',cursor:'crosshair',borderRadius:8,border:'2px solid #2196f3'}}
         onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}
         onTouchStart={e=>{e.preventDefault();onMouseDown(e);}}
         onTouchMove={e=>{e.preventDefault();onMouseMove(e);}}
         onTouchEnd={onMouseUp}/>
-      <img ref={imgRef} src={src} style={{display:'none'}} onLoad={()=>{ const c={x:0.1,y:0.1,w:0.8,h:0.8}; cropRef.current=c; setCrop(c); drawCanvas(c); }} crossOrigin="anonymous"/>
       <div style={{display:'flex',gap:12,marginTop:16}}>
         <button onClick={applyCrop} style={{background:'#16a34a',color:'white',border:'none',borderRadius:7,padding:'10px 24px',fontWeight:700,cursor:'pointer',fontSize:13}}>Apply Crop</button>
         <button onClick={onCancel} style={{background:'#374151',color:'white',border:'none',borderRadius:7,padding:'10px 24px',fontWeight:700,cursor:'pointer',fontSize:13}}>Cancel</button>
@@ -294,11 +312,11 @@ export default function Home() {
   const pairSlide=(a,b)=>{
     const pA=a.startsWith('data:')?a:proxyImg(a);
     const pB=b.startsWith('data:')?b:proxyImg(b);
-    return `<div style="width:390px;height:${SH}px;overflow:hidden;background:#000;display:block"><div style="width:390px;height:${PH}px;overflow:hidden;display:block"><img src="${pA}" data-cover="1" style="width:390px;height:${PH}px;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/></div><div style="width:390px;height:3px;background:#000;display:block"></div><div style="width:390px;height:${PH}px;overflow:hidden;display:block"><img src="${pB}" data-cover="1" style="width:390px;height:${PH}px;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/></div></div>`;
+    return `<div style="width:390px;height:${SH}px;overflow:hidden;background:#000;display:block"><div style="width:390px;height:${PH}px;background:#000;display:flex;align-items:center;justify-content:center"><img src="${pA}" data-cover="1" style="width:390px;height:${PH}px;object-fit:contain;display:block" crossorigin="anonymous"/></div><div style="width:390px;height:3px;background:#111;display:block"></div><div style="width:390px;height:${PH}px;background:#000;display:flex;align-items:center;justify-content:center"><img src="${pB}" data-cover="1" style="width:390px;height:${PH}px;object-fit:contain;display:block" crossorigin="anonymous"/></div></div>`;
   };
   const singleSlide=a=>{
     const pA=a.startsWith('data:')?a:proxyImg(a);
-    return `<div style="width:390px;height:${SH}px;overflow:hidden;background:#000;display:block"><img src="${pA}" data-cover="1" style="width:390px;height:${SH}px;object-fit:cover;object-position:center;display:block" crossorigin="anonymous"/></div>`;
+    return `<div style="width:390px;height:${SH}px;background:#000;display:flex;align-items:center;justify-content:center"><img src="${pA}" data-cover="1" style="width:390px;height:${SH}px;object-fit:contain;display:block" crossorigin="anonymous"/></div>`;
   };
 
   const slides_html=!preview?null:[
