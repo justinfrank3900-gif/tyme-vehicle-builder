@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Head from 'next/head';
 
 function fmt$(v) { const n = String(v).replace(/[^0-9]/g,''); if(!n) return ''; return '$'+parseInt(n).toLocaleString(); }
@@ -52,7 +52,7 @@ function CropModal({ src, onDone, onCancel }) {
   }
 
   // Load image as blob to avoid canvas taint (CORS issue)
-  useState(() => {
+  useEffect(() => {
     fetch(src).then(r=>r.blob()).then(blob=>{
       const url = URL.createObjectURL(blob);
       const img = new Image();
@@ -146,7 +146,7 @@ function BrushModal({ src, onDone, onCancel }) {
   const [brushSize, setBrushSize] = useState(20);
   const [ready, setReady] = useState(false);
 
-  useState(() => {
+  useEffect(() => {
     fetch(src).then(r=>r.blob()).then(blob=>{
       const url = URL.createObjectURL(blob);
       const img = new Image();
