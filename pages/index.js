@@ -396,6 +396,59 @@ export default function Home() {
     } catch(e) { setStatus({msg:'Erase failed: '+e.message, type:'err'}); }
   }
 
+  function postToFacebook() {
+    const title = fields.title || 'Vehicle';
+    const price = fields.todP || '';
+    const kms = fields.kms || '';
+    const color = fields.color || '';
+    const bwP = fields.bwP || '';
+    const down = fields.downP || '';
+    const trade = fields.trade || '';
+    const lien = fields.lien || '';
+    const equity = fields.equity || '';
+    const payLine = fields.paymentLine || '';
+    const upgrade = fields.upgP || '';
+    const feats = parseBullets(featText);
+
+    const lines = [];
+    lines.push(`🚗 ${title}`);
+    if (price) lines.push(`💰 ${price}`);
+    if (kms) lines.push(`📍 ${kms}${color ? ` | ${color}` : ''}`);
+    lines.push('');
+    if (bwP) lines.push(`✅ ${bwP} biweekly`);
+    if (down) lines.push(`✅ Down Payment: ${down}`);
+    if (payLine) lines.push(`✅ ${payLine}`);
+    if (trade || lien || equity) {
+      lines.push('');
+      if (trade) lines.push(`🔄 Trade Value: ${trade}`);
+      if (lien) lines.push(`📋 Lien: ${lien}`);
+      if (equity) lines.push(`💵 Neg Equity: ${equity}`);
+    }
+    if (upgrade) lines.push(`⏱️ Upgrade In: ${upgrade}`);
+    if (feats.length) {
+      lines.push('');
+      lines.push('🔑 KEY FEATURES:');
+      feats.forEach(f => lines.push(`• ${f}`));
+    }
+    lines.push('');
+    lines.push('📲 DM us or comment below to get started!');
+    lines.push('#SubprimeAuto #CarLoans #BadCredit #GetApproved #EasyAutoLoans');
+
+    const text = lines.join('\n');
+
+    // Copy to clipboard
+    navigator.clipboard.writeText(text).then(() => {
+      setStatus({msg:'✓ Listing copied! Opening Facebook Marketplace...', type:'ok'});
+    }).catch(() => {
+      setStatus({msg:'✓ Open Facebook Marketplace and paste your listing', type:'ok'});
+    });
+
+    // Open Facebook Marketplace new listing
+    setTimeout(() => {
+      window.open('https://www.facebook.com/marketplace/create/vehicle', '_blank');
+    }, 500);
+  }
+
   const features=parseBullets(featText);
   const pairs=[];
   for(let i=0;i<selImgs.length;i+=2)
@@ -650,6 +703,7 @@ export default function Home() {
           <HR/>
           <Btn style={{width:'100%',justifyContent:'center',padding:11,fontSize:13}} onClick={()=>setPreview(true)}>⚡ Build Preview</Btn>
           <Btn style={{width:'100%',justifyContent:'center',padding:11,fontSize:13,background:'#16a34a',marginTop:6}} onClick={doExport}>{exporting?'⏳ Generating...':'↓ Export PDF'}</Btn>
+          <Btn style={{width:'100%',justifyContent:'center',padding:11,fontSize:13,background:'#1877f2',marginTop:6}} onClick={postToFacebook}>📘 Post to Facebook</Btn>
         </div>
 
         <div style={{flex:1,overflowY:'auto',background:'#111',display:'flex',flexDirection:'column',alignItems:'center',padding:'20px 16px'}} ref={prevRef}>
