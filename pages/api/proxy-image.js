@@ -10,7 +10,10 @@ export default async function handler(req, res) {
     } else if (decodedUrl.includes('kaizenauto') || decodedUrl.includes('autotradercdn') || decodedUrl.includes('photomanager')) {
       referer = 'https://www.kaizenauto.com/';
     } else if (decodedUrl.includes('cargurus')) {
+      // CarGurus CDN - try with their own referer
       referer = 'https://www.cargurus.ca/';
+    } else if (decodedUrl.includes('static.cargurus.com')) {
+      referer = 'https://www.cargurus.com/';
     } else if (decodedUrl.includes('autoscout24')) {
       referer = 'https://www.autotrader.ca/';
     }
