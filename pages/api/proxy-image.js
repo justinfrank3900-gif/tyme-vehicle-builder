@@ -2,10 +2,23 @@ export default async function handler(req, res) {
   const { url } = req.query;
   if (!url) return res.status(400).end('No URL');
   try {
-    const r = await fetch(decodeURIComponent(url), {
+    const decodedUrl = decodeURIComponent(url);
+    // Pick the right referer based on the image CDN
+    let referer = 'https://www.autotrader.ca/';
+    if (decodedUrl.includes('d2cmedia') || decodedUrl.includes('mountainviewdodge')) {
+      referer = 'https://www.mountainviewdodge.com/';
+    } else if (decodedUrl.includes('kaizenauto') || decodedUrl.includes('autotradercdn') || decodedUrl.includes('photomanager')) {
+      referer = 'https://www.kaizenauto.com/';
+    } else if (decodedUrl.includes('cargurus')) {
+      referer = 'https://www.cargurus.ca/';
+    } else if (decodedUrl.includes('autoscout24')) {
+      referer = 'https://www.autotrader.ca/';
+    }
+
+    const r = await fetch(decodedUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://www.mountainviewdodge.com/',
+        'Referer': referer,
       },
       signal: AbortSignal.timeout(15000)
     });
