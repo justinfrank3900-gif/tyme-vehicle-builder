@@ -186,19 +186,47 @@ function parseVehicle(html, url, platform) {
         const unit = (jsonLd.mileageFromOdometer.unitCode || 'KMT').toUpperCase();
         result.kms = formatKms(unit === 'SMI' ? Math.round(val * 1.60934) : val);
       }
-      if (jsonLd.image) {
-        const imgs = Array.isArray(jsonLd.image) ? jsonLd.image : [jsonLd.image];
-        result.images = imgs.filter(u => typeof u === 'string' && u.startsWith('http')).slice(0, 25);
-      }
     }
     if (!result.kms) { const m = text.match(/([\d,]+)\s*km\b/i); if (m) result.kms = formatKms(m[1].replace(/,/g,'')); }
-    if (!result.images.length) {
-      const cgSet = new Set();
-      const ms = html.matchAll(/https:\/\/[^"'\s<>]*(?:cargurus|vehicle-photos)[^"'\s<>]*\.(?:jpg|jpeg|png|webp)/gi);
-      for (const m of ms) cgSet.add(m[0]);
-      $('meta[property="og:image"]').each((_, el) => { const s = $(el).attr('content'); if (s) cgSet.add(s); });
-      result.images = [...cgSet].slice(0, 25);
+
+    // Collect all CarGurus photo URLs from multiple sources then dedup by base filename
+    const cgSet = new Set();
+    const seenBase = new Set();
+
+    function addCgImg(u) {
+      if (!u || !u.startsWith('http')) return;
+      // Normalize to highest quality version - remove size params
+      const base = u.replace(/[?&](w|h|width|height|size|maxw|maxh|quality|crop|fit)=[^&]*/gi, '')
+                    .replace(/\/\d+x\d+\//g, '/').replace(/_\d+x\d+\./g, '.');
+      // Dedup by the core filename/ID
+      const key = base.replace(/https?:\/\/[^/]+/, '').replace(/\?.*$/, '').split('/').filter(Boolean).slice(-2).join('/');
+      if (!seenBase.has(key)) { seenBase.add(key); cgSet.add(u); }
     }
+
+    // Source 1: JSON-LD images
+    if (jsonLd?.image) {
+      const imgs = Array.isArray(jsonLd.image) ? jsonLd.image : [jsonLd.image];
+      imgs.filter(u => typeof u === 'string').forEach(addCgImg);
+    }
+    // Source 2: All image URLs in HTML matching CarGurus CDNs
+    for (const m of html.matchAll(/https:\/\/[^"'\s<>]*(?:cargurus|vehicle-photos|cgstatic|autocorp)[^"'\s<>]*\.(?:jpg|jpeg|png|webp)/gi)) {
+      addCgImg(m[0]);
+    }
+    // Source 3: data-src and srcset attributes
+    $('img[data-src], img[srcset], source[srcset]').each((_, el) => {
+      const src = $(el).attr('data-src') || '';
+      const srcset = $(el).attr('srcset') || '';
+      if (src) addCgImg(src);
+      // Parse srcset - take the largest
+      if (srcset) {
+        const parts = srcset.split(',').map(s => s.trim().split(/\s+/)[0]);
+        parts.forEach(addCgImg);
+      }
+    });
+    // Source 4: og:image
+    $('meta[property="og:image"]').each((_, el) => { addCgImg($(el).attr('content')); });
+
+    result.images = [...cgSet].filter(u => !u.includes('logo') && !u.includes('dealer')).slice(0, 25);
     result.features = extractFeatures(text);
   }
 
