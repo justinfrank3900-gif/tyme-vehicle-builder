@@ -279,6 +279,8 @@ export default function Home() {
   function proxyImg(src){
     if(!src) return src;
     if(src.startsWith('/')||src.startsWith('data:')) return src;
+    // These CDNs block server-side requests but allow direct browser loads
+    if(src.includes('static.cargurus.com') || src.includes('cargurus.com/images')) return src;
     return `/api/proxy-image?url=${encodeURIComponent(src)}`;
   }
 
@@ -706,7 +708,6 @@ export default function Home() {
           <div style={{padding:'12px 16px',borderTop:'1px solid #1e1e2c',background:'#13131a'}}>
           <Btn style={{width:'100%',justifyContent:'center',padding:11,fontSize:13}} onClick={()=>setPreview(true)}>⚡ Build Preview</Btn>
           <Btn style={{width:'100%',justifyContent:'center',padding:11,fontSize:13,background:'#16a34a',marginTop:6}} onClick={doExport}>{exporting?'⏳ Generating...':'↓ Export PDF'}</Btn>
-          <Btn style={{width:'100%',justifyContent:'center',padding:11,fontSize:13,background:'#1877f2',marginTop:6}} onClick={postToFacebook}>📘 Post to Facebook</Btn>
           </div>
         </div>
 
